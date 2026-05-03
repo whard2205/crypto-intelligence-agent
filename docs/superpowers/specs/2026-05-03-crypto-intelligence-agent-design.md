@@ -1,7 +1,7 @@
 # Crypto Market Intelligence Multi-Agent System — Design Spec
 
 **Date:** 2026-05-03  
-**Status:** Approved  
+**Status:** Approved with Required Revisions  
 **Target:** Recruiter-ready MVP demonstrating multi-agent AI engineering for AI/LLM and crypto/fintech roles
 
 ---
@@ -24,10 +24,37 @@ Build a Crypto Market Intelligence Multi-Agent System that collects market, news
 | Scheduling | APScheduler (AsyncIOScheduler) |
 | Telegram | python-telegram-bot v20 (async) |
 | HTTP client | httpx (async) |
-| Settings | Pydantic BaseSettings + python-dotenv |
+| Settings | pydantic-settings (`from pydantic_settings import BaseSettings`) |
 | Testing | pytest + pytest-asyncio + respx (HTTP mocking) |
 | Packaging | pyproject.toml (uv or pip) |
 | Container | Dockerfile (single-stage, Python 3.11-slim) |
+
+### pyproject.toml dependencies
+
+```toml
+[project]
+dependencies = [
+    "langgraph>=0.2",
+    "anthropic>=0.40",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-telegram-bot>=20.0",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "apscheduler>=3.10",
+    "aiosqlite>=0.20",
+    "feedparser>=6.0",
+    "praw>=7.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+]
+```
 
 ---
 
@@ -50,7 +77,74 @@ All sources use a `FallbackAdapter` chain: primary → fallback → mock. The sy
 
 ---
 
-## 4. Graph Flow
+## 4. Environment & Cost-Control Settings
+
+All settings loaded via `pydantic-settings` from `.env` or environment variables.
+
+```python
+# config/settings.py
+from pydantic_settings import BaseSettings
+from pydantic import Field
+from typing import Literal
+
+class Settings(BaseSettings):
+    # Environment
+    ENV: Literal["development", "test", "production"] = "development"
+    MOCK_MODE: bool = False           # force all adapters to mock regardless of ENV
+
+    # LLM
+    ANTHROPIC_API_KEY: str
+    ANTHROPIC_SUPERVISOR_MODEL: str = "claude-sonnet-4-6"
+    ANTHROPIC_ANALYZER_MODEL: str = "claude-haiku-4-5-20251001"
+    LLM_ENABLED: bool = True
+
+    # LLM cost-control (IDR budget)
+    DAILY_LLM_BUDGET_IDR: float = 50_000.0    # ~$3 USD
+    MAX_LLM_CALLS_PER_DAY: int = 100
+
+    # Data sources
+    ETHERSCAN_API_KEY: str = ""
+    REDDIT_CLIENT_ID: str = ""
+    REDDIT_CLIENT_SECRET: str = ""
+    REDDIT_USER_AGENT: str = "crypto-intel-agent/0.1"
+
+    # Telegram
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+
+    # API
+    API_AUTH_ENABLED: bool = False
+    API_KEY: str = ""
+
+    # Timezone
+    DISPLAY_TIMEZONE: str = "Asia/Jakarta"    # for Telegram formatting
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+```
+
+### Mock mode rules
+
+| ENV | MOCK_MODE | Behavior |
+|---|---|---|
+| `development` | any | Real adapters attempted; mock used as final fallback |
+| `test` | any | All adapters forced to mock regardless of MOCK_MODE flag |
+| `production` | `false` (default) | Real adapters only; mock **never** used. Source unavailable on failure. |
+| `production` | `true` | Explicitly allowed mock (e.g. demo/recruiter run without real keys) |
+
+In `production` with `MOCK_MODE=false`: if all real adapters for price fail → return `ErrorReport`. For non-price sources → mark as unavailable, continue.
+
+### LLM budget enforcement
+
+A `LLMBudgetTracker` (in `services/llm_budget.py`) tracks daily call count and estimated cost. Before each Claude call:
+1. If `LLM_ENABLED=false` → skip, use deterministic fallback
+2. If daily calls ≥ `MAX_LLM_CALLS_PER_DAY` or estimated cost ≥ `DAILY_LLM_BUDGET_IDR` → skip, use deterministic fallback, append `"llm_budget_exceeded"` to `state["errors"]`
+3. Deterministic fallback for analyzers: returns rule-based output (RSI thresholds, keyword scoring) instead of Claude response
+
+---
+
+## 5. Graph Flow
 
 ```
 START
@@ -100,7 +194,7 @@ This keeps the graph a pure intelligence pipeline, reusable by any publisher.
 
 ---
 
-## 5. State Schema
+## 6. State Schema
 
 ```python
 # graph/state.py
@@ -132,15 +226,22 @@ class AnalysisResult(TypedDict):
 class IntelligenceReport(TypedDict):
     run_id:           str
     symbol:           str
-    requested_at:     str                    # ISO — pipeline trigger time
-    generated_at:     str                    # ISO — supervisor completion time
+    requested_at:     str                    # UTC ISO — pipeline trigger time
+    generated_at:     str                    # UTC ISO — supervisor completion time
     market_bias:      Literal["bullish", "bearish", "neutral"]
     confidence_score: float                  # 0.0–1.0
     key_signals:      list[str]              # 3–5 bullet points
     risk_warnings:    list[str]
     narrative:        str                    # 2–3 sentence market summary
     data_gaps:        list[str]              # deduplicated warnings for missing sources
-    error:            Optional[str]          # set only on critical failure (e.g. price unavailable)
+
+class ErrorReport(TypedDict):
+    """Returned when a critical failure prevents report generation (e.g. price unavailable)."""
+    run_id:       str
+    symbol:       str
+    requested_at: str                        # UTC ISO
+    generated_at: str                        # UTC ISO
+    error:        str
 
 
 class AgentState(TypedDict):
@@ -166,8 +267,8 @@ class AgentState(TypedDict):
     # Merged analysis: set by merge_analysis
     analysis:      Optional[AnalysisResult]
 
-    # Final output
-    report:        Optional[IntelligenceReport]
+    # Final output — IntelligenceReport on success, ErrorReport on critical failure
+    report:        Optional[Union[IntelligenceReport, ErrorReport]]
 
     # Error tracking — reducer-safe for parallel execution
     data_gaps:     Annotated[list[str], operator.add]
@@ -176,7 +277,7 @@ class AgentState(TypedDict):
 
 ---
 
-## 6. Node Responsibilities
+## 7. Node Responsibilities
 
 ### Collector nodes (run in parallel)
 
@@ -223,7 +324,7 @@ Reads `sentiment_analysis`, `price_pattern_analysis`, `risk_analysis` — all `O
 
 ---
 
-## 7. Data Source Adapter Design
+## 8. Data Source Adapter Design
 
 ```python
 # data_sources/base.py
@@ -285,7 +386,7 @@ Every adapter is wrapped by:
 
 ---
 
-## 8. Fallback Strategy
+## 9. Fallback Strategy
 
 1. `FallbackAdapter` tries each adapter — logs failures, returns first success
 2. If all adapters return `None`, collector writes `None` to its state field and appends `"<domain>_unavailable"` to `data_gaps`
@@ -297,7 +398,7 @@ Every adapter is wrapped by:
 
 ---
 
-## 9. Folder Structure
+## 10. Folder Structure
 
 ```
 crypto-intelligence-agent/
@@ -388,14 +489,48 @@ crypto-intelligence-agent/
 
 ---
 
-## 10. API Contract
+## 11. API Contract
+
+### Response schemas
+
+Two distinct Pydantic models — no shared `error` field on `IntelligenceReport`:
+
+```python
+# api/schemas.py
+from pydantic import BaseModel
+from typing import Literal, Optional, Union
+from datetime import datetime
+
+class IntelligenceReportResponse(BaseModel):
+    run_id:           str
+    symbol:           str
+    requested_at:     datetime
+    generated_at:     datetime
+    market_bias:      Literal["bullish", "bearish", "neutral"]
+    confidence_score: float
+    key_signals:      list[str]
+    risk_warnings:    list[str]
+    narrative:        str
+    data_gaps:        list[str]
+
+class ErrorReportResponse(BaseModel):
+    run_id:       str
+    symbol:       str
+    requested_at: datetime
+    generated_at: datetime
+    error:        str
+
+ReportResponse = Union[IntelligenceReportResponse, ErrorReportResponse]
+```
 
 ### `GET /report?symbol=BTCUSDT`
+
+If `API_AUTH_ENABLED=true`, requires header `X-API-Key: <value>`. Missing or invalid key returns `401`.
 
 Response `200 OK`:
 ```json
 {
-  "run_id": "uuid4",
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
   "symbol": "BTCUSDT",
   "requested_at": "2026-05-03T10:00:00Z",
   "generated_at": "2026-05-03T10:00:08Z",
@@ -406,22 +541,26 @@ Response `200 OK`:
     "Mempool activity elevated — network usage rising",
     "News sentiment: 4 bullish articles, 1 neutral"
   ],
-  "risk_warnings": ["⚠️ RSI approaching overbought (68)"],
+  "risk_warnings": ["RSI approaching overbought (68)"],
   "narrative": "Bitcoin shows early accumulation signals with rising on-chain activity and positive news flow. Volume confirms the move but RSI is approaching overbought territory — watch for short-term pullback.",
-  "data_gaps": ["social_unavailable"],
-  "error": null
+  "data_gaps": ["social_unavailable"]
 }
 ```
 
 Response `503` (critical failure — price unavailable):
 ```json
 {
-  "run_id": "uuid4",
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
   "symbol": "BTCUSDT",
   "requested_at": "2026-05-03T10:00:00Z",
   "generated_at": "2026-05-03T10:00:01Z",
   "error": "Price data unavailable — cannot generate intelligence report"
 }
+```
+
+Response `401` (API auth enabled, missing/invalid key):
+```json
+{"detail": "Invalid or missing X-API-Key"}
 ```
 
 ### `GET /health`
@@ -431,11 +570,54 @@ Response `503` (critical failure — price unavailable):
 
 ---
 
-## 11. Telegram Report Format
+## 12. Cross-Cutting Concerns
+
+### Reddit credentials
+
+PRAW requires `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, and `REDDIT_USER_AGENT`. If any are empty:
+- `ENV=production`, `MOCK_MODE=false` → `RedditAdapter.fetch()` returns `None` immediately, `"social_unavailable"` appended to `data_gaps`
+- `ENV=development/test` or `MOCK_MODE=true` → `MockSocialAdapter` is used as fallback
+
+No exception is raised — missing Reddit credentials are a graceful degradation, not a startup failure.
+
+### Claude output validation
+
+All Claude calls (sentiment, risk, supervisor) return structured JSON. Validation uses a dedicated Pydantic model per call:
+
+```python
+# Validation flow for every LLM call
+try:
+    raw = await claude_client.call(prompt)
+    result = OutputModel.model_validate_json(raw)
+    return result
+except ValidationError:
+    repair_raw = await claude_client.call(repair_prompt(raw))
+    try:
+        return OutputModel.model_validate_json(repair_raw)
+    except ValidationError:
+        state["errors"].append("llm_validation_failed:<node_name>")
+        return deterministic_fallback()
+```
+
+Deterministic fallbacks per node:
+- `analyze_sentiment` fallback: `{sentiment_score: 0.0, sentiment_label: "neutral", sentiment_drivers: []}`
+- `analyze_risk` fallback: `{risk_level: "medium", risk_factors: ["insufficient data for risk assessment"]}`
+- `supervisor` fallback: returns a minimal `IntelligenceReport` with `confidence_score: 0.1`, `market_bias: "neutral"`, `narrative: "Analysis unavailable — LLM validation failed"`
+
+### Timezone strategy
+
+- All timestamps stored and passed through the pipeline in **UTC ISO 8601** format (`2026-05-03T10:00:00Z`)
+- Telegram display converts to `DISPLAY_TIMEZONE` (default: `Asia/Jakarta`, UTC+7) using `zoneinfo`
+- FastAPI responses always return UTC timestamps
+- `pyproject.toml` dependency: `zoneinfo` is stdlib in Python 3.9+; no extra package needed
+
+---
+
+## 13. Telegram Report Format
 
 ```
 📊 *BTC Market Intelligence*
-🕐 2026-05-03 10:00 UTC
+🕐 2026-05-03 17:00 WIB
 
 *Bias:* 🟢 Bullish  |  *Confidence:* 74%
 
@@ -460,41 +642,47 @@ Commands:
 
 ---
 
-## 12. MVP Milestones
+## 14. MVP Milestones
 
 ### Milestone 1 — Data Foundation (Days 1–5)
-- `DataSourceAdapter` ABC + `FallbackAdapter` with logging
+- `pydantic-settings` `Settings` class with all env vars + mock mode rules
+- `DataSourceAdapter` ABC + `FallbackAdapter` with failure logging
 - All adapters: Binance, CoinGecko, RSS, CryptoPanic, Blockchain.com, Etherscan, Reddit
+- Reddit graceful skip when credentials missing
 - All mock adapters for offline dev and CI
-- `RetryDecorator` + `TTLCache` + `RateLimiter`
+- `RetryDecorator` + `TTLCache` + `RateLimiter` + `LLMBudgetTracker`
 - Unit tests for all adapters with `respx` HTTP mocking
 
 ### Milestone 2 — LangGraph Pipeline (Days 6–10)
 - `AgentState` and all TypedDicts in `graph/state.py`
-- All 4 collector nodes with fan-out and fallback wiring
+- All 4 collector nodes with fan-out, fallback wiring, and mock mode enforcement
 - `aggregate_raw` with normalization, deduplication, and critical failure edge
 - All 3 analysis nodes (Haiku for sentiment/risk, pure Python for price pattern)
+- Claude output Pydantic validation + repair prompt + deterministic fallback per node
 - `merge_analysis` node
 - `StateGraph` compilation in `pipeline.py`
 - Integration test: full graph with mock adapters, assert `IntelligenceReport` shape
 
 ### Milestone 3 — Supervisor + Publishing (Days 11–15)
-- `supervisor` node with Claude Sonnet + prompt templates in `config/prompts.py`
+- `supervisor` node with Claude Sonnet + Pydantic output validation
+- Prompt templates in `config/prompts.py`
 - `FastAPI` app with `GET /report` and `GET /health`
-- `TelegramPublisher` with Markdown formatter
+- `IntelligenceReportResponse` + `ErrorReportResponse` union schema
+- Optional `X-API-Key` auth middleware (`API_AUTH_ENABLED` setting)
+- `TelegramPublisher` with Markdown formatter + `DISPLAY_TIMEZONE` conversion
 - Telegram `/report` command handler
 - SQLite report history (store last 100 reports per symbol, older rows pruned on insert)
 
 ### Milestone 4 — Scheduler + Polish (Days 16–20)
 - `APScheduler` 4-hour job wired through FastAPI lifespan
-- `.env.example` with all required keys documented
+- `.env.example` with all required keys and inline documentation
 - `Dockerfile` (Python 3.11-slim, non-root user)
-- `README.md` with architecture diagram, setup guide, and demo screenshots
+- `README.md` with architecture diagram, setup guide, demo screenshots, and cost-control notes
 - End-to-end smoke test against real APIs (single run, rate-limited)
 
 ---
 
-## 13. Testing Plan
+## 15. Testing Plan
 
 | Test type | Scope | Tool |
 |---|---|---|
@@ -505,5 +693,11 @@ Commands:
 | Integration — pipeline | Full graph with all mock adapters, assert `IntelligenceReport` structure | pytest-asyncio |
 | Fallback test | Disable primary adapter, assert fallback activates, `data_gaps` populated | pytest |
 | Critical failure test | All adapters return None for price, assert error report returned | pytest |
+| Mock mode test | ENV=production MOCK_MODE=false — assert mock adapters never called | pytest |
+| LLM budget test | Exhaust MAX_LLM_CALLS_PER_DAY, assert deterministic fallback returned | pytest |
+| LLM validation test | Claude returns malformed JSON, assert repair attempted then fallback | pytest |
+| Reddit missing creds test | Empty REDDIT_CLIENT_ID, assert social_unavailable in data_gaps, no exception | pytest |
+| API auth test | API_AUTH_ENABLED=true, missing key → 401; valid key → 200 | FastAPI TestClient |
+| Timezone test | generated_at stored as UTC, Telegram display shows WIB offset | pytest |
 | API test | All endpoints with valid + invalid inputs | FastAPI TestClient |
 | E2E smoke | Real APIs, single run, assert report generates, no assertion on content | pytest-asyncio |
