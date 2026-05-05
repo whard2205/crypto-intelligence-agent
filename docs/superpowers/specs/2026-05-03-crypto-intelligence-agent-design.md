@@ -162,9 +162,9 @@ START
   │                              CRITICAL CHECK: if price_data is None → route to error_exit
   ▼
 [fan_out_analyzers]           ← Send() dispatches all 3 analyzers in parallel
-  ├── analyze_sentiment         writes → sentiment_analysis
-  ├── analyze_price_pattern     writes → price_pattern_analysis
-  └── analyze_risk              writes → risk_analysis
+  ├── analyze_sentiment           writes → sentiment_analysis
+  ├── analyze_market_structure    writes → market_structure_analysis
+  └── analyze_risk                writes → risk_analysis
   │
   ▼ (all analyzers joined)
 [merge_analysis]              ← combines 3 separate fields → AnalysisResult
@@ -218,7 +218,7 @@ class AnalysisResult(TypedDict):
     sentiment_score:    Optional[float]      # -1.0 to 1.0
     sentiment_label:    Optional[str]        # "bullish" | "bearish" | "neutral"
     sentiment_drivers:  Optional[list[str]]  # top 3 news/social signals
-    price_pattern:      Optional[dict]       # {rsi, ma_trend, momentum, volume_trend}
+    market_structure:   Optional[dict]       # see MarketStructureAnalysis TypedDict in Section 7a
     risk_level:         Optional[str]        # "low" | "medium" | "high"
     risk_factors:       Optional[list[str]]  # ["BTC whale outflow detected", ...]
 
@@ -260,9 +260,9 @@ class AgentState(TypedDict):
     context:       Optional[NormalizedMarketContext]
 
     # Separate analyzer outputs — written independently, merged by merge_analysis
-    sentiment_analysis:     Optional[dict]
-    price_pattern_analysis: Optional[dict]
-    risk_analysis:          Optional[dict]
+    sentiment_analysis:        Optional[dict]
+    market_structure_analysis: Optional[dict]
+    risk_analysis:             Optional[dict]
 
     # Merged analysis: set by merge_analysis
     analysis:      Optional[AnalysisResult]
@@ -301,14 +301,14 @@ class AgentState(TypedDict):
 | Node | Implementation | Input from `context` | Writes to |
 |---|---|---|---|
 | `analyze_sentiment` | Claude Haiku | `news_items`, `social_summary` | `sentiment_analysis` |
-| `analyze_price_pattern` | Pure Python (no LLM) | `price_summary.ohlcv_24h` | `price_pattern_analysis` |
+| `analyze_market_structure` | Pure Python (no LLM) | `price_summary.ohlcv_24h` | `market_structure_analysis` |
 | `analyze_risk` | Claude Haiku | `onchain_summary`, `price_summary` | `risk_analysis` |
 
-`analyze_price_pattern` computes: RSI (14-period), simple MA trend (above/below 20-period MA), volume trend (rising/falling), price momentum (rate of change).
+`analyze_market_structure` runs the full market structure analysis pipeline (see Section 7a). MVP is deterministic rule-based. Phase 2 adds ML confidence scorer. Phase 3 adds Monte Carlo simulation.
 
 ### `merge_analysis`
 
-Reads `sentiment_analysis`, `price_pattern_analysis`, `risk_analysis` — all `Optional[dict]`. Combines into `AnalysisResult` and sets `state["analysis"]`. Handles missing inputs gracefully: fields stay `None` if source analyzer had no data.
+Reads `sentiment_analysis`, `market_structure_analysis`, `risk_analysis` — all `Optional[dict]`. Combines into `AnalysisResult` and sets `state["analysis"]`. Handles missing inputs gracefully: fields stay `None` if source analyzer had no data.
 
 ### `supervisor`
 
@@ -321,6 +321,147 @@ Reads `sentiment_analysis`, `price_pattern_analysis`, `risk_analysis` — all `O
   - `risk_warnings`: any flags from risk analysis or data gaps
   - `narrative`: 2–3 sentence market intelligence summary
   - `data_gaps`: carried from context (deduplicated)
+
+---
+
+## 7a. Market Structure Analysis Design
+
+The `analyze_market_structure` node is the most technically differentiated component of this system. It applies ICT/SMC (Smart Money Concepts) market structure analysis rather than surface-level indicator overlap. Supporting indicators (RSI, MACD, MA, momentum) are secondary confirmation signals — they do not drive the primary signal.
+
+### Primary Signals (rule-based, deterministic in MVP)
+
+| Signal | Algorithm | Output |
+|---|---|---|
+| Swing high / swing low | Compare each candle to `n` neighbors; default `n=3` | `swing_highs: list[float]`, `swing_lows: list[float]` |
+| Liquidity sweep | Price exceeds prior swing level then closes back inside range | `liquidity_sweeps: list[LiquiditySweep]` |
+| Order block zone | Last opposing candle before a BOS move | `order_blocks: list[OrderBlock]` |
+| BOS / CHOCH | Break of Structure = new high/low continuation; CHOCH = first break in opposite direction | `bos_choch: list[StructureBreak]` |
+| Volume confirmation | Volume at signal candle vs. rolling average; confirms or warns | `volume_confirmed: bool` |
+| Invalidation level | Most recent opposite swing high/low; setup is invalidated if price closes beyond it | `invalidation_level: float` |
+| Confidence score | Weighted sum of confirmed signals | `confidence_score: float` (0.0–1.0) |
+| Explanation | Human-readable narrative of detected signals | `explanation: str` |
+
+### Secondary Confirmations (supporting indicators)
+
+These feed into `confidence_score` and `explanation` only — they do not independently produce buy/sell signals.
+
+| Indicator | Computation | Weight in confidence |
+|---|---|---|
+| RSI (14-period) | Standard Wilder smoothing | +0.05 if aligned with bias |
+| MACD histogram slope | MACD(12,26,9); slope of histogram last 3 bars | +0.05 if momentum aligned |
+| MA trend | Price vs. 20-period MA, 50-period MA | +0.05 per aligned MA |
+| Momentum | 5-bar rate of change (%) | +0.05 if confirms direction |
+
+### Output TypedDicts
+
+```python
+class LiquiditySweep(TypedDict):
+    type: Literal["high", "low"]
+    swept_level: float
+    sweep_candle_idx: int
+    confirmed: bool          # closed back inside range
+
+class OrderBlock(TypedDict):
+    type: Literal["bullish", "bearish"]
+    zone_high: float
+    zone_low: float
+    candle_idx: int
+    mitigated: bool          # price has returned to zone since formation
+
+class StructureBreak(TypedDict):
+    type: Literal["BOS", "CHOCH"]
+    direction: Literal["bullish", "bearish"]
+    break_level: float
+    candle_idx: int
+
+class MarketStructureAnalysis(TypedDict):
+    # Primary signals
+    bias:               Literal["bullish", "bearish", "neutral"]
+    swing_highs:        list[float]
+    swing_lows:         list[float]
+    liquidity_sweeps:   list[LiquiditySweep]
+    order_blocks:       list[OrderBlock]
+    bos_choch:          list[StructureBreak]
+    volume_confirmed:   bool
+    invalidation_level: Optional[float]
+    # Secondary indicators
+    rsi:                float
+    macd_histogram_slope: float
+    ma_trend:           Literal["uptrend", "downtrend", "sideways"]
+    momentum_pct:       float
+    # Synthesis
+    confidence_score:   float        # 0.0–1.0, weighted across confirmed signals
+    explanation:        str          # narrative description of detected signals
+    # Phase 2: ML confidence (None until ML model is trained and deployed)
+    ml_probability_1r:  Optional[float]   # P(reaches +1R before invalidation)
+    ml_probability_2r:  Optional[float]   # P(reaches +2R before invalidation)
+```
+
+### Confidence Score Formula (deterministic MVP)
+
+```
+base = 0.0
+if bos_choch detected:             base += 0.30
+if liquidity_sweep confirmed:      base += 0.20
+if order_block identified:         base += 0.20
+if volume_confirmed:               base += 0.10
+if rsi aligned with bias:          base += 0.05
+if macd_histogram_slope aligned:   base += 0.05
+if ma_trend aligned:               base += 0.05 per aligned MA (max 0.10)
+if momentum_pct aligned:           base += 0.05
+
+confidence_score = min(1.0, base)
+```
+
+A score of 0.0–0.40 = low conviction. 0.40–0.70 = moderate. 0.70–1.0 = high conviction.
+
+### Phase 2: ML Confidence Scorer
+
+After sufficient signal history is collected (at minimum 200 labeled examples), an XGBoost binary classifier or ensemble model will be trained to predict `P(setup reaches +1R/+2R before hitting invalidation_level)`.
+
+Feature vector:
+
+| Feature | Source | Type |
+|---|---|---|
+| `liquidity_event` | `liquidity_sweeps` non-empty | binary |
+| `order_block_distance_pct` | distance from current price to nearest OB | float |
+| `bos_confirmed` | `bos_choch` non-empty | binary |
+| `choch_confirmed` | CHOCH in bos_choch list | binary |
+| `volume_zscore` | (volume - rolling_mean) / rolling_std | float |
+| `rsi` | RSI value | float |
+| `macd_histogram_slope` | slope of last 3 bars | float |
+| `volatility_regime` | ATR / price (normalized) | float |
+| `sentiment_score` | from sentiment_analysis | float |
+| `risk_level_encoded` | low=0, medium=1, high=2, critical=3 | int |
+
+Training target: binary label — did price reach +1R before invalidation_level? Derived from forward-looking price data in backtest.
+
+Implementation: `services/ml_scorer.py`. The `analyze_market_structure` node calls `ml_scorer.score(features)` if `ML_ENABLED=true` in settings. Falls back to confidence_score from rule-based engine if ML is unavailable.
+
+### Phase 3: Monte Carlo Risk Simulation
+
+Monte Carlo simulation stress-tests the detected setup under realistic trading conditions before the report reaches the user. It runs N simulations (default 1000) of the trade from entry to either take-profit or invalidation, incorporating:
+
+- **Fee model:** taker fee (default 0.04% per leg) + funding rate
+- **Slippage model:** random draw from normal distribution, mean = 0, std = configured slippage_std
+- **Random trade sequence:** entry price is perturbed by ±slippage on each simulation
+- **Volatility regime:** ATR-scaled random walk between entry and target/stop
+
+Output appended to `MarketStructureAnalysis`:
+```python
+monte_carlo: Optional[MonteCarloResult]  # None until Phase 3
+
+class MonteCarloResult(TypedDict):
+    n_simulations:   int
+    win_rate_1r:     float   # % of simulations reaching +1R
+    win_rate_2r:     float   # % of simulations reaching +2R
+    expected_value:  float   # in R-multiples
+    ruin_probability: float  # % of sims hitting max drawdown threshold
+    p5_outcome:      float   # 5th percentile outcome (R-multiples)
+    p95_outcome:     float   # 95th percentile outcome (R-multiples)
+```
+
+Implementation: `services/monte_carlo.py`. Called only when `MONTE_CARLO_ENABLED=true`. Zero cost — pure NumPy computation, no external API.
 
 ---
 
@@ -412,7 +553,7 @@ crypto-intelligence-agent/
 │   ├── analyzers/
 │   │   ├── __init__.py
 │   │   ├── sentiment_analyzer.py    # analyze_sentiment node fn (Claude Haiku)
-│   │   ├── price_pattern_analyzer.py # analyze_price_pattern node fn (pure Python)
+│   │   ├── market_structure_analyzer.py # analyze_market_structure node fn (pure Python → ML Phase 2)
 │   │   └── risk_analyzer.py         # analyze_risk node fn (Claude Haiku)
 │   └── supervisor.py                # supervisor node fn (Claude Sonnet)
 ├── graph/
