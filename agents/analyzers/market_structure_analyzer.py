@@ -51,9 +51,10 @@ async def analyze_market_structure(state: AgentState) -> dict:
     swing_highs  = _detect_swing_highs(highs, n=3)
     swing_lows   = _detect_swing_lows(lows, n=3)
     sweeps       = _detect_liquidity_sweeps(highs, lows, closes, swing_highs, swing_lows)
-    bos_choch    = _detect_bos_choch(closes, swing_highs, swing_lows)
+    bos_choch    = _deduplicate_bos(_detect_bos_choch(closes, swing_highs, swing_lows))
     order_blocks = _detect_order_blocks(highs, lows, closes, bos_choch)
     vol_confirmed = _volume_confirmed(volumes)
+    vol_missing   = _volumes_all_zero(volumes)
     invalidation  = _invalidation_level(bos_choch, swing_highs, swing_lows)
 
     bias = "neutral"
@@ -72,6 +73,7 @@ async def analyze_market_structure(state: AgentState) -> dict:
     confidence, explanation = _score_and_explain(
         bias, bos_choch, sweeps, order_blocks, vol_confirmed,
         rsi, macd_slope, ma_trend, momentum,
+        vol_data_missing=vol_missing,
     )
 
     return {
@@ -196,6 +198,42 @@ def _detect_bos_choch(
     return events
 
 
+def _deduplicate_bos(events: list[dict]) -> list[dict]:
+    """Remove redundant same-direction BOS/CHOCH events from the same structural move.
+
+    Two events are merged when ALL of:
+      • same direction
+      • candle distance ≤ 2
+      • break_level difference < 0.15% of the higher level
+
+    Kept event: higher break_level for bullish, lower for bearish (the "better" level).
+    """
+    if len(events) < 2:
+        return events
+    result = list(events)
+    i = 0
+    while i < len(result) - 1:
+        a, b = result[i], result[i + 1]
+        if a["direction"] != b["direction"]:
+            i += 1
+            continue
+        if b["candle_idx"] - a["candle_idx"] > 2:
+            i += 1
+            continue
+        ref = max(a["break_level"], b["break_level"])
+        if abs(b["break_level"] - a["break_level"]) / ref >= 0.0015:
+            i += 1
+            continue
+        keep = b if (
+            (a["direction"] == "bullish" and b["break_level"] >= a["break_level"]) or
+            (a["direction"] == "bearish" and b["break_level"] <= a["break_level"])
+        ) else a
+        result[i] = keep
+        result.pop(i + 1)
+        # Don't advance i — re-check new result[i] against new result[i+1]
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Order blocks
 # ---------------------------------------------------------------------------
@@ -246,6 +284,10 @@ def _volume_confirmed(volumes: list[float]) -> bool:
         return False
     avg_prev = sum(volumes[:-1]) / (len(volumes) - 1)
     return volumes[-1] > avg_prev * 1.10
+
+
+def _volumes_all_zero(volumes: list[float]) -> bool:
+    return len(volumes) > 0 and all(v == 0.0 for v in volumes)
 
 
 # ---------------------------------------------------------------------------
@@ -318,15 +360,16 @@ def _ma_trend(price: float, ma20: float, ma50: float) -> str:
 # ---------------------------------------------------------------------------
 
 def _score_and_explain(
-    bias:          str,
-    bos_choch:     list[dict],
-    sweeps:        list[dict],
-    order_blocks:  list[dict],
-    vol_confirmed: bool,
-    rsi:           float,
-    macd_slope:    float,
-    ma_trend:      str,
-    momentum_pct:  float,
+    bias:             str,
+    bos_choch:        list[dict],
+    sweeps:           list[dict],
+    order_blocks:     list[dict],
+    vol_confirmed:    bool,
+    rsi:              float,
+    macd_slope:       float,
+    ma_trend:         str,
+    momentum_pct:     float,
+    vol_data_missing: bool = False,
 ) -> tuple[float, str]:
     score = 0.0
     parts: list[str] = []
@@ -351,6 +394,8 @@ def _score_and_explain(
     if vol_confirmed:
         score += 0.10
         parts.append("volume confirms last move")
+    elif vol_data_missing:
+        parts.append("volume data unavailable")
 
     # Secondary: each worth up to 0.05
     if (bias == "bullish" and rsi > 50) or (bias == "bearish" and rsi < 50):
