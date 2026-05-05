@@ -119,7 +119,7 @@ In `ENV=production` the mock fallback is **not** included — failures surface a
 ### Install
 
 ```bash
-git clone https://github.com/syujadewa18/crypto-intelligence-agent
+git clone https://github.com/whard2205/crypto-intelligence-agent
 cd crypto-intelligence-agent
 uv sync
 ```
