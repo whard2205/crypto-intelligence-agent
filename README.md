@@ -1,6 +1,6 @@
 # Crypto Market Intelligence Agent
 
-A zero-cost, recruiter-demo-ready multi-agent system that generates structured cryptocurrency market intelligence reports using a LangGraph pipeline, FastAPI, and a Telegram bot — with no paid API required in mock mode.
+A zero-cost, demo ready multi-agent system that generates structured cryptocurrency market intelligence reports using a LangGraph pipeline, FastAPI, and a Telegram bot — with no paid API required in mock mode.
 
 ---
 
