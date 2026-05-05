@@ -288,6 +288,21 @@ Engine: rule-based  |  Price: binance  |  News: rss
 
 ---
 
+## Demo Screenshots
+
+> Screenshots are captured from a live demo run. See [docs/demo_assets_checklist.md](docs/demo_assets_checklist.md) for the capture guide.
+
+| | |
+|---|---|
+| ![Tests passing](docs/assets/tests_passed.png) | ![Swagger UI](docs/assets/swagger.png) |
+| 73/73 tests passing | FastAPI Swagger UI |
+| ![/report response](docs/assets/api_report.png) | ![/history response](docs/assets/api_history.png) |
+| `/report?symbol=BTCUSDT` JSON | `/history?symbol=BTCUSDT` JSON |
+| ![Telegram report](docs/assets/telegram_report.png) | |
+| Telegram `/report BTCUSDT` | |
+
+---
+
 ## Roadmap
 
 | Phase | Feature | Status |
