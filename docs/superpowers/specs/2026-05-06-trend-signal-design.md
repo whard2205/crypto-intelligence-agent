@@ -59,6 +59,12 @@ async def inject_trend_signal(
     if not symbol or not current_bias:
         return report
 
+    key_signals = list(report.get("key_signals") or [])
+
+    # Duplicate protection: skip if a trend signal is already present
+    if any(s.startswith("Bias changed:") for s in key_signals):
+        return report
+
     try:
         history = await repo.get_latest(symbol, limit=1)
     except Exception as exc:
@@ -71,7 +77,7 @@ async def inject_trend_signal(
     previous_bias = history[0].get("market_bias")
     if previous_bias and previous_bias != current_bias:
         signal = f"Bias changed: {previous_bias} → {current_bias} since last report"
-        report = {**report, "key_signals": list(report.get("key_signals", [])) + [signal]}
+        report = {**report, "key_signals": key_signals + [signal]}
 
     return report
 ```
@@ -79,6 +85,7 @@ async def inject_trend_signal(
 **Key behaviors:**
 - Returns a new dict (does not mutate the input)
 - Only appends signal when bias is **different** from previous; identical bias → no signal
+- Duplicate protection: if a `"Bias changed:"` signal already exists, returns unchanged (idempotent)
 - `repo.get_latest` failure → log WARNING, return unchanged (never raises)
 - Error reports skipped entirely
 
