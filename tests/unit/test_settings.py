@@ -27,3 +27,8 @@ def test_use_mock_returns_false_in_production_without_flag():
 
 def test_use_mock_returns_true_in_production_with_mock_flag():
     assert Settings(ENV="production", MOCK_MODE=True).use_mock() is True
+
+
+def test_scheduler_interval_hours_default():
+    s = Settings()
+    assert s.SCHEDULER_INTERVAL_HOURS == 4

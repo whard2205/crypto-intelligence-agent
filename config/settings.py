@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     DAILY_LLM_BUDGET_IDR: float = 0.0
     MAX_LLM_CALLS_PER_DAY: int = 0
     SCHEDULER_ENABLED: bool = False
+    SCHEDULER_INTERVAL_HOURS: int = 4
     ML_ENABLED: bool = False
     MONTE_CARLO_ENABLED: bool = False
 
