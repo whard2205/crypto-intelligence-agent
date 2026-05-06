@@ -96,7 +96,14 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 # ---------------------------------------------------------------------------
 
 async def _post_init(application: Application) -> None:
-    settings: Settings = application.bot_data["settings"]
+    await setup_bot_data(application, application.bot_data["settings"])
+
+
+# ---------------------------------------------------------------------------
+# Bot data initializer for FastAPI-integrated lifecycle
+# ---------------------------------------------------------------------------
+
+async def setup_bot_data(application: Application, settings: Settings) -> None:
     repo = ReportHistoryRepository(settings.DB_PATH)
     await repo.init_db()
     application.bot_data["repo"] = repo
