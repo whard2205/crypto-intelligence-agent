@@ -50,11 +50,34 @@ async def lifespan(app: FastAPI):
                 settings.WATCH_SYMBOLS,
             )
 
+    bot_application = None
+    if settings.TELEGRAM_BOT_ENABLED:
+        if not settings.TELEGRAM_BOT_TOKEN:
+            logger.warning(
+                "TELEGRAM_BOT_ENABLED=true but TELEGRAM_BOT_TOKEN is missing "
+                "— bot will not start"
+            )
+        else:
+            from telegram_bot.main import build_bot, setup_bot_data
+            bot_application = build_bot(settings)
+            await bot_application.initialize()
+            await setup_bot_data(bot_application, settings)
+            await bot_application.start()
+            await bot_application.updater.start_polling()
+            logger.info("Telegram bot started — polling for commands")
+
     yield
 
     if scheduler is not None:
         scheduler.shutdown(wait=False)
         logger.info("Scheduler stopped")
+
+    if bot_application is not None:
+        if bot_application.updater:
+            await bot_application.updater.stop()
+        await bot_application.stop()
+        await bot_application.shutdown()
+        logger.info("Telegram bot stopped")
 
 
 app = FastAPI(
