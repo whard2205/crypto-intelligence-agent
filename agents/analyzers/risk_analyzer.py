@@ -6,7 +6,6 @@ from graph.state import AgentState
 def make_risk_analyzer(settings: Settings):
     async def analyze_risk(state: AgentState) -> dict:
         if settings.LLM_ENABLED:
-            # Phase 9: Claude path (not implemented in MVP)
             pass
         return _deterministic_risk(state)
     return analyze_risk
@@ -16,6 +15,7 @@ def _deterministic_risk(state: AgentState) -> dict:
     context       = state.get("context") or {}
     price_summary = context.get("price_summary", {})
     onchain       = context.get("onchain_summary", {})
+    funding       = context.get("funding_rate_summary")    # Optional[FundingRateSummary]
     data_gaps     = context.get("data_gaps", [])
     risk_factors: list[str] = []
     risk_score = 0
@@ -32,8 +32,17 @@ def _deterministic_risk(state: AgentState) -> dict:
         risk_factors.append("High mempool congestion detected")
         risk_score += 1
 
-    # RSI-based risk warnings are applied in the supervisor after all analyzers
-    # merge (market_structure_analysis is not yet available during parallel execution).
+    if funding is not None:
+        rate      = funding["rate"]
+        abs_rate  = abs(rate)
+        direction = "longs" if rate > 0 else "shorts"
+
+        if abs_rate >= 0.0015:
+            risk_factors.append(f"Extreme funding rate {rate:+.3%} — {direction} overextended")
+            risk_score += 2
+        elif abs_rate >= 0.0005:
+            risk_factors.append(f"Elevated funding rate {rate:+.3%} — {direction} crowded")
+            risk_score += 1
 
     if data_gaps:
         risk_factors.append(f"Incomplete data: {', '.join(data_gaps)}")
