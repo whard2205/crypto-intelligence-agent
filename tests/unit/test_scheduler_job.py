@@ -27,6 +27,7 @@ def _make_publisher():
 def _make_repo():
     repo = MagicMock()
     repo.save = AsyncMock()
+    repo.get_latest = AsyncMock(return_value=[])
     return repo
 
 

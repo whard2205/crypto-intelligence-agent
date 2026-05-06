@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from config.settings import Settings
+from graph.trend import inject_trend_signal
 from publishers.base import ReportPublisher
 from storage.report_history import ReportHistoryRepository
 
@@ -40,6 +41,9 @@ async def _run_single(
             if attempt == 2:
                 report = _make_error_report(symbol)
                 logger.error("Pipeline failed after retry for %s: %s", symbol, exc_detail)
+
+    if report is not None and not report.get("error"):
+        report = await inject_trend_signal(report, repo)
 
     if report is not None and not report.get("error"):
         try:
