@@ -50,7 +50,7 @@ class IntelligenceReportResponse(BaseModel):
     price_source: str = "unknown"
     news_source: str = "unknown"
     analysis_engine: str = "rule-based"
-    funding_source: str = "unavailable"    # new
+    funding_source: str = "unavailable"
 
 
 class ErrorReportResponse(BaseModel):
