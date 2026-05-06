@@ -156,8 +156,10 @@ def format_history_summary(symbol: str, records: list[dict], tz_name: str) -> st
         bias  = r.get("market_bias", "neutral")
         emoji = _BIAS_EMOJI.get(bias, "🟡")
         conf  = r.get("confidence_score")
+        # Compact history shows raw score (e.g. 0.82), not percentage — per spec design decision.
         conf_s = f"{conf:.2f}" if conf is not None else "—"
 
+        # key_signals are stored as raw strings (not HTML-escaped) in the DB.
         signals      = r.get("key_signals") or []
         bias_changed = any(str(s).startswith("Bias changed:") for s in signals)
         change_str   = "↗ bias berubah" if bias_changed else "—"

@@ -26,8 +26,9 @@ def test_single_entry_bias_changed():
 def test_single_entry_no_bias_change():
     record = _make_record()
     result = format_history_summary("BTCUSDT", [record], "Asia/Jakarta")
+    assert "↗ bias berubah" not in result
     lines = [l for l in result.splitlines() if "📅" in l]
-    assert lines[0].endswith("—")
+    assert lines[0].endswith("| —")
 
 
 def test_multiple_entries_rendered():
