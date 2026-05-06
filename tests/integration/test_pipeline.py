@@ -1,7 +1,8 @@
+# tests/integration/test_pipeline.py
 import pytest
-from unittest.mock import AsyncMock
 from config.settings import Settings
 from data_sources.base import DataSourceAdapter
+from data_sources.mock.mock_funding_rate import MockFundingRateAdapter
 from graph.pipeline import build_graph
 
 
@@ -15,24 +16,24 @@ class _MockAdapter(DataSourceAdapter):
 
 
 def _initial_state(symbol: str = "BTCUSDT") -> dict:
-    from graph.state import AgentState
     import uuid, datetime
     return {
-        "run_id": str(uuid.uuid4()),
-        "symbol": symbol,
-        "requested_at": datetime.datetime.now(datetime.UTC).isoformat(),
-        "price_data": None,
-        "news_data": [],
-        "onchain_data": None,
-        "social_data": None,
-        "context": None,
-        "sentiment_analysis": None,
+        "run_id":                    str(uuid.uuid4()),
+        "symbol":                    symbol,
+        "requested_at":              datetime.datetime.now(datetime.UTC).isoformat(),
+        "price_data":                None,
+        "news_data":                 [],
+        "onchain_data":              None,
+        "social_data":               None,
+        "funding_rate_data":         None,
+        "context":                   None,
+        "sentiment_analysis":        None,
         "market_structure_analysis": None,
-        "risk_analysis": None,
-        "analysis": None,
-        "report": None,
-        "data_gaps": [],
-        "errors": [],
+        "risk_analysis":             None,
+        "analysis":                  None,
+        "report":                    None,
+        "data_gaps":                 [],
+        "errors":                    [],
     }
 
 
@@ -64,6 +65,12 @@ def _make_price_payload(symbol: str = "BTCUSDT"):
     }
 
 
+def _mock_funding() -> _MockAdapter:
+    return _MockAdapter("mock_funding_rate",
+                        {"symbol": "BTCUSDT", "funding_rate": 0.00080,
+                         "funding_time": "", "source": "mock"})
+
+
 @pytest.fixture
 def settings_mock():
     return Settings(ENV="test", MOCK_MODE=True, LLM_ENABLED=False)
@@ -76,7 +83,8 @@ def mock_graph(settings_mock):
                                              "published_at": "", "url": ""}])
     onchain = _MockAdapter("mock_onchain", {"network": "bitcoin", "active_addresses_24h": 1_000_000})
     social  = _MockAdapter("mock_social",  {"post_count": 20, "top_posts": [], "source": "mock"})
-    return build_graph(settings_mock, price, news, onchain, social)
+    funding = _mock_funding()
+    return build_graph(settings_mock, price, news, onchain, social, funding)
 
 
 async def test_full_pipeline_btcusdt(mock_graph):
@@ -98,7 +106,8 @@ async def test_pipeline_returns_error_report_when_price_missing(settings_mock):
     news      = _MockAdapter("mock_news",    [])
     onchain   = _MockAdapter("mock_onchain", {})
     social    = _MockAdapter("mock_social",  {})
-    graph = build_graph(settings_mock, bad_price, news, onchain, social)
+    funding   = _mock_funding()
+    graph = build_graph(settings_mock, bad_price, news, onchain, social, funding)
 
     result = await graph.ainvoke(_initial_state("BTCUSDT"))
     report = result["report"]
@@ -112,7 +121,8 @@ async def test_pipeline_continues_when_social_missing(settings_mock):
                                              "published_at": "", "url": ""}])
     onchain = _MockAdapter("mock_onchain", {"network": "bitcoin", "active_addresses_24h": 1_000_000})
     social  = _MockAdapter("mock_social",  None)
-    graph = build_graph(settings_mock, price, news, onchain, social)
+    funding = _mock_funding()
+    graph = build_graph(settings_mock, price, news, onchain, social, funding)
 
     result = await graph.ainvoke(_initial_state("BTCUSDT"))
     report = result["report"]
@@ -132,3 +142,19 @@ async def test_pipeline_full_report_structure(mock_graph):
     assert required_keys.issubset(report.keys())
     assert isinstance(report["data_gaps"], list)
     assert isinstance(report["generated_at"], str)
+
+
+async def test_pipeline_mock_includes_funding_source(mock_graph):
+    result = await mock_graph.ainvoke(_initial_state("BTCUSDT"))
+    report = result["report"]
+    assert not report.get("error")
+    assert report.get("funding_source") == "mock"
+
+
+async def test_pipeline_mock_btcusdt_funding_signal(mock_graph):
+    result = await mock_graph.ainvoke(_initial_state("BTCUSDT"))
+    report = result["report"]
+    assert not report.get("error")
+    # BTCUSDT mock rate = 0.00080 (moderate) → supervisor adds key_signal
+    funding_signals = [s for s in report["key_signals"] if "Funding rate" in s]
+    assert len(funding_signals) >= 1

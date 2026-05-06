@@ -25,6 +25,7 @@ def _make_initial_state(symbol: str) -> dict:
         "news_data":                 [],
         "onchain_data":              None,
         "social_data":               None,
+        "funding_rate_data":         None,      # new
         "context":                   None,
         "sentiment_analysis":        None,
         "market_structure_analysis": None,
