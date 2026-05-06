@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     MAX_LLM_CALLS_PER_DAY: int = 0
     SCHEDULER_ENABLED: bool = False
     SCHEDULER_INTERVAL_HOURS: int = 4
+    TELEGRAM_BOT_ENABLED: bool = False
     ML_ENABLED: bool = False
     MONTE_CARLO_ENABLED: bool = False
 

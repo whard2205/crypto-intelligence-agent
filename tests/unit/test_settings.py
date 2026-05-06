@@ -10,6 +10,7 @@ def test_defaults_are_cost_safe():
     assert s.MAX_LLM_CALLS_PER_DAY == 0
     assert s.SCHEDULER_ENABLED is False
     assert s.SCHEDULER_INTERVAL_HOURS == 4
+    assert s.TELEGRAM_BOT_ENABLED is False
     assert s.ML_ENABLED is False
     assert s.MONTE_CARLO_ENABLED is False
 
