@@ -30,7 +30,7 @@ Add unit tests for the existing Telegram bot command handlers and integrate the 
 
 | File | Purpose |
 |---|---|
-| `tests/unit/test_telegram_bot.py` | 10 unit tests for handlers, `build_bot`, `setup_bot_data` |
+| `tests/unit/test_telegram_bot.py` | 11 unit tests for handlers, `build_bot`, `setup_bot_data` |
 
 ### Modified files
 
@@ -97,7 +97,8 @@ if settings.TELEGRAM_BOT_ENABLED:
 yield
 
 if bot_application is not None:
-    await bot_application.updater.stop()
+    if bot_application.updater:
+        await bot_application.updater.stop()
     await bot_application.stop()
     await bot_application.shutdown()
     logger.info("Telegram bot stopped")
@@ -149,6 +150,7 @@ All tests use `AsyncMock` for `update.message.reply_text`, `graph.ainvoke`, `rep
 | `test_start_command_sends_help_text` | call `start_command` | same output as help |
 | `test_report_command_invalid_symbol_sends_error` | args=`["bad!"]` | error message containing "Invalid symbol" sent |
 | `test_report_command_no_args_sends_generating_message` | no args, `WATCH_SYMBOLS="BTCUSDT,ETHUSDT"` | "⏳ Generating" reply sent |
+| `test_report_command_no_args_calls_pipeline_for_all_symbols` | no args, `WATCH_SYMBOLS="BTCUSDT,ETHUSDT"` | `graph.ainvoke` called twice (once per symbol) |
 | `test_report_command_valid_symbol_invokes_pipeline` | args=`["BTCUSDT"]`, pipeline success | `graph.ainvoke` called once |
 | `test_report_command_pipeline_success_saves_to_repo` | args=`["BTCUSDT"]`, pipeline success | `repo.save` called with report |
 | `test_report_command_pipeline_failure_sends_error` | `graph.ainvoke` raises | `❌` error reply sent; no exception propagated |
