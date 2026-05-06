@@ -106,6 +106,15 @@ def _deterministic_supervisor(state: AgentState) -> dict:
     drivers = analysis.get("sentiment_drivers") or []
     key_signals.extend(drivers[:1])
 
+    # Funding rate key signal
+    funding = context.get("funding_rate_summary")
+    if funding is not None and abs(funding["rate"]) >= 0.0005:
+        direction = "longs" if funding["rate"] > 0 else "shorts"
+        key_signals.append(f"Funding rate {funding['rate']:+.3%} ({direction} crowded)")
+
+    # Funding source provenance
+    funding_source = funding["source"] if funding is not None else "unavailable"
+
     # ------------------------------------------------------------------
     # 4. Risk warnings — built before any risk_level adjustment so the
     #    consistency check below sees the full picture.
@@ -173,5 +182,6 @@ def _deterministic_supervisor(state: AgentState) -> dict:
         "price_source":     context.get("price_source", "unknown"),
         "news_source":      context.get("news_source", "unknown"),
         "analysis_engine":  "rule-based",
+        "funding_source":   funding_source,
     }
     return {"report": report}
