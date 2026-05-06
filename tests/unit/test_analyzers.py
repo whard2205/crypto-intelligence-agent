@@ -50,9 +50,10 @@ async def test_sentiment_neutral_on_empty_news():
 # --- Market structure ---
 
 async def test_market_structure_returns_expected_fields():
-    from agents.analyzers.market_structure_analyzer import analyze_market_structure
+    from agents.analyzers.market_structure_analyzer import make_market_structure_analyzer
+    node = make_market_structure_analyzer(Settings(LLM_ENABLED=False, ML_ENABLED=False))
     state = _state_with_context()
-    result = await analyze_market_structure(state)
+    result = await node(state)
     ms = result["market_structure_analysis"]
 
     assert ms["bias"] in ("bullish", "bearish", "neutral")
@@ -64,12 +65,14 @@ async def test_market_structure_returns_expected_fields():
     assert isinstance(ms["swing_lows"], list)
     assert isinstance(ms["bos_choch"], list)
     assert ms["ml_probability_1r"] is None
+    assert ms["market_regime"] is None  # ML_ENABLED=False
 
 
 async def test_market_structure_insufficient_data_returns_neutral():
-    from agents.analyzers.market_structure_analyzer import analyze_market_structure
+    from agents.analyzers.market_structure_analyzer import make_market_structure_analyzer
+    node = make_market_structure_analyzer(Settings(LLM_ENABLED=False, ML_ENABLED=False))
     state = _state_with_context(ohlcv=[])
-    result = await analyze_market_structure(state)
+    result = await node(state)
     ms = result["market_structure_analysis"]
     assert ms["bias"] == "neutral"
     assert ms["confidence_score"] == 0.0
@@ -78,11 +81,50 @@ async def test_market_structure_insufficient_data_returns_neutral():
 
 
 async def test_market_structure_rsi_in_valid_range():
-    from agents.analyzers.market_structure_analyzer import analyze_market_structure
+    from agents.analyzers.market_structure_analyzer import make_market_structure_analyzer
+    node = make_market_structure_analyzer(Settings(LLM_ENABLED=False, ML_ENABLED=False))
     state = _state_with_context(ohlcv=make_ohlcv(50))
-    result = await analyze_market_structure(state)
+    result = await node(state)
     rsi = result["market_structure_analysis"]["rsi"]
     assert 0.0 <= rsi <= 100.0
+
+
+async def test_market_structure_ml_enabled_calls_hmm():
+    from agents.analyzers.market_structure_analyzer import make_market_structure_analyzer
+    from unittest.mock import patch
+    settings = Settings(LLM_ENABLED=False, ML_ENABLED=True)
+    node = make_market_structure_analyzer(settings)
+    mock_result = {"regime": "bull_trending", "n_states": 3, "source": "hmm"}
+    with patch(
+        "agents.analyzers.market_structure_analyzer.detect_hmm_regime",
+        return_value=mock_result,
+    ) as mock_hmm:
+        state = _state_with_context(ohlcv=make_ohlcv(60))
+        result = await node(state)
+    assert result["market_structure_analysis"]["market_regime"] == mock_result
+    mock_hmm.assert_called_once()
+
+
+async def test_market_structure_ml_disabled_market_regime_is_none():
+    from agents.analyzers.market_structure_analyzer import make_market_structure_analyzer
+    node = make_market_structure_analyzer(Settings(LLM_ENABLED=False, ML_ENABLED=False))
+    state = _state_with_context(ohlcv=make_ohlcv(60))
+    result = await node(state)
+    assert result["market_structure_analysis"]["market_regime"] is None
+
+
+async def test_market_structure_hmm_failure_market_regime_is_none():
+    from agents.analyzers.market_structure_analyzer import make_market_structure_analyzer
+    from unittest.mock import patch
+    settings = Settings(LLM_ENABLED=False, ML_ENABLED=True)
+    node = make_market_structure_analyzer(settings)
+    with patch(
+        "agents.analyzers.market_structure_analyzer.detect_hmm_regime",
+        side_effect=RuntimeError("fail"),
+    ):
+        state = _state_with_context(ohlcv=make_ohlcv(60))
+        result = await node(state)
+    assert result["market_structure_analysis"]["market_regime"] is None
 
 
 # --- Risk ---

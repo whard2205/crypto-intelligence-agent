@@ -5,8 +5,9 @@
 import pytest
 from agents.analyzers.market_structure_analyzer import (
     _deduplicate_bos,
-    analyze_market_structure,
+    make_market_structure_analyzer,
 )
+from config.settings import Settings
 from tests.conftest import make_state, make_ohlcv
 
 
@@ -127,7 +128,7 @@ def test_dedup_preserves_unrelated_events():
 async def test_zero_volume_adds_unavailable_note():
     """All-zero volumes → explanation contains 'volume data unavailable'."""
     state = _state_with_ohlcv(_zero_volume_ohlcv(40))
-    result = await analyze_market_structure(state)
+    result = await make_market_structure_analyzer(Settings(LLM_ENABLED=False, ML_ENABLED=False))(state)
     ms = result["market_structure_analysis"]
     assert "volume data unavailable" in ms["explanation"]
     assert ms["volume_confirmed"] is False
@@ -136,13 +137,13 @@ async def test_zero_volume_adds_unavailable_note():
 async def test_zero_volume_does_not_set_volume_confirmed():
     """Zero-volume candles must not set volume_confirmed=True."""
     state = _state_with_ohlcv(_zero_volume_ohlcv(40))
-    result = await analyze_market_structure(state)
+    result = await make_market_structure_analyzer(Settings(LLM_ENABLED=False, ML_ENABLED=False))(state)
     assert result["market_structure_analysis"]["volume_confirmed"] is False
 
 
 async def test_normal_volume_no_unavailable_note():
     """Normal non-zero volumes → explanation does NOT mention 'volume data unavailable'."""
     state = _state_with_ohlcv(make_ohlcv(40))
-    result = await analyze_market_structure(state)
+    result = await make_market_structure_analyzer(Settings(LLM_ENABLED=False, ML_ENABLED=False))(state)
     ms = result["market_structure_analysis"]
     assert "volume data unavailable" not in ms["explanation"]

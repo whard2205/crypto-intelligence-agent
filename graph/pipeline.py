@@ -24,7 +24,7 @@ def build_graph(
     from agents.collectors.social_collector        import make_social_collector
     from agents.collectors.funding_rate_collector  import make_funding_rate_collector
     from agents.analyzers.sentiment_analyzer       import make_sentiment_analyzer
-    from agents.analyzers.market_structure_analyzer import analyze_market_structure
+    from agents.analyzers.market_structure_analyzer import make_market_structure_analyzer
     from agents.analyzers.risk_analyzer            import make_risk_analyzer
     from agents.supervisor                         import make_supervisor
 
@@ -39,7 +39,7 @@ def build_graph(
     workflow.add_node("aggregate_raw",         aggregate_raw)
     workflow.add_node("fan_out_analyzers",     fan_out_analyzers)
     workflow.add_node("analyze_sentiment",         make_sentiment_analyzer(settings))
-    workflow.add_node("analyze_market_structure",  analyze_market_structure)
+    workflow.add_node("analyze_market_structure",  make_market_structure_analyzer(settings))
     workflow.add_node("analyze_risk",              make_risk_analyzer(settings))
     workflow.add_node("merge_analysis",  merge_analysis)
     workflow.add_node("supervisor",      make_supervisor(settings))

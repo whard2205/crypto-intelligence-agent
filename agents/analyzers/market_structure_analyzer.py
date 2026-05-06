@@ -14,88 +14,101 @@ import logging
 import math
 from typing import Optional
 
+from config.settings import Settings
+from graph.hmm_regime import detect_hmm_regime
 from graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Public node
+# Public factory
 # ---------------------------------------------------------------------------
 
-async def analyze_market_structure(state: AgentState) -> dict:
-    context = state.get("context") or {}
-    ohlcv   = context.get("price_summary", {}).get("ohlcv_24h", [])
+def make_market_structure_analyzer(settings: Settings):
+    async def analyze_market_structure(state: AgentState) -> dict:
+        context = state.get("context") or {}
+        ohlcv   = context.get("price_summary", {}).get("ohlcv_24h", [])
 
-    _empty = {
-        "bias": "neutral",
-        "swing_highs": [], "swing_lows": [],
-        "liquidity_sweeps": [], "order_blocks": [], "bos_choch": [],
-        "volume_confirmed": False, "invalidation_level": None,
-        "rsi": 50.0, "macd_histogram_slope": 0.0,
-        "ma_trend": "sideways", "momentum_pct": 0.0,
-        "confidence_score": 0.0,
-        "explanation": "Insufficient OHLCV data for market structure analysis.",
-        "ml_probability_1r": None, "ml_probability_2r": None,
-    }
-
-    if not ohlcv or len(ohlcv) < 10:
-        return {"market_structure_analysis": _empty}
-
-    highs   = [float(c["high"])          for c in ohlcv]
-    lows    = [float(c["low"])           for c in ohlcv]
-    closes  = [float(c["close"])         for c in ohlcv]
-    volumes = [float(c.get("volume", 0)) for c in ohlcv]
-
-    # --- Primary signals ---
-    swing_highs  = _detect_swing_highs(highs, n=3)
-    swing_lows   = _detect_swing_lows(lows, n=3)
-    sweeps       = _detect_liquidity_sweeps(highs, lows, closes, swing_highs, swing_lows)
-    bos_choch    = _deduplicate_bos(_detect_bos_choch(closes, swing_highs, swing_lows))
-    order_blocks = _detect_order_blocks(highs, lows, closes, bos_choch)
-    vol_confirmed = _volume_confirmed(volumes)
-    vol_missing   = _volumes_all_zero(volumes)
-    invalidation  = _invalidation_level(bos_choch, swing_highs, swing_lows)
-
-    bias = "neutral"
-    if bos_choch:
-        bias = bos_choch[-1]["direction"]
-
-    # --- Secondary indicators ---
-    rsi        = _compute_rsi(closes)
-    macd_slope = _compute_macd_histogram_slope(closes)
-    ma20       = _sma(closes, 20)
-    ma50       = _sma(closes, 50)
-    ma_trend   = _ma_trend(closes[-1], ma20, ma50)
-    momentum   = round((closes[-1] - closes[-5]) / closes[-5] * 100, 2) if len(closes) >= 5 else 0.0
-
-    # --- Confidence score + explanation ---
-    confidence, explanation = _score_and_explain(
-        bias, bos_choch, sweeps, order_blocks, vol_confirmed,
-        rsi, macd_slope, ma_trend, momentum,
-        vol_data_missing=vol_missing,
-    )
-
-    return {
-        "market_structure_analysis": {
-            "bias":                  bias,
-            "swing_highs":           swing_highs,
-            "swing_lows":            swing_lows,
-            "liquidity_sweeps":      sweeps,
-            "order_blocks":          order_blocks,
-            "bos_choch":             bos_choch,
-            "volume_confirmed":      vol_confirmed,
-            "invalidation_level":    invalidation,
-            "rsi":                   round(rsi, 1),
-            "macd_histogram_slope":  round(macd_slope, 6),
-            "ma_trend":              ma_trend,
-            "momentum_pct":          momentum,
-            "confidence_score":      round(confidence, 2),
-            "explanation":           explanation,
-            "ml_probability_1r":     None,
-            "ml_probability_2r":     None,
+        _empty = {
+            "bias": "neutral",
+            "swing_highs": [], "swing_lows": [],
+            "liquidity_sweeps": [], "order_blocks": [], "bos_choch": [],
+            "volume_confirmed": False, "invalidation_level": None,
+            "rsi": 50.0, "macd_histogram_slope": 0.0,
+            "ma_trend": "sideways", "momentum_pct": 0.0,
+            "confidence_score": 0.0,
+            "explanation": "Insufficient OHLCV data for market structure analysis.",
+            "market_regime":     None,
+            "ml_probability_1r": None, "ml_probability_2r": None,
         }
-    }
+
+        if not ohlcv or len(ohlcv) < 10:
+            return {"market_structure_analysis": _empty}
+
+        highs   = [float(c["high"])          for c in ohlcv]
+        lows    = [float(c["low"])           for c in ohlcv]
+        closes  = [float(c["close"])         for c in ohlcv]
+        volumes = [float(c.get("volume", 0)) for c in ohlcv]
+
+        # --- Primary signals ---
+        swing_highs  = _detect_swing_highs(highs, n=3)
+        swing_lows   = _detect_swing_lows(lows, n=3)
+        sweeps       = _detect_liquidity_sweeps(highs, lows, closes, swing_highs, swing_lows)
+        bos_choch    = _deduplicate_bos(_detect_bos_choch(closes, swing_highs, swing_lows))
+        order_blocks = _detect_order_blocks(highs, lows, closes, bos_choch)
+        vol_confirmed = _volume_confirmed(volumes)
+        vol_missing   = _volumes_all_zero(volumes)
+        invalidation  = _invalidation_level(bos_choch, swing_highs, swing_lows)
+
+        bias = "neutral"
+        if bos_choch:
+            bias = bos_choch[-1]["direction"]
+
+        # --- Secondary indicators ---
+        rsi        = _compute_rsi(closes)
+        macd_slope = _compute_macd_histogram_slope(closes)
+        ma20       = _sma(closes, 20)
+        ma50       = _sma(closes, 50)
+        ma_trend   = _ma_trend(closes[-1], ma20, ma50)
+        momentum   = round((closes[-1] - closes[-5]) / closes[-5] * 100, 2) if len(closes) >= 5 else 0.0
+
+        # --- Confidence score + explanation ---
+        confidence, explanation = _score_and_explain(
+            bias, bos_choch, sweeps, order_blocks, vol_confirmed,
+            rsi, macd_slope, ma_trend, momentum,
+            vol_data_missing=vol_missing,
+        )
+
+        market_regime = None
+        if settings.ML_ENABLED:
+            try:
+                market_regime = detect_hmm_regime(ohlcv)
+            except Exception as exc:
+                logger.warning("HMM regime detection failed unexpectedly: %s", exc)
+
+        return {
+            "market_structure_analysis": {
+                "bias":                  bias,
+                "swing_highs":           swing_highs,
+                "swing_lows":            swing_lows,
+                "liquidity_sweeps":      sweeps,
+                "order_blocks":          order_blocks,
+                "bos_choch":             bos_choch,
+                "volume_confirmed":      vol_confirmed,
+                "invalidation_level":    invalidation,
+                "rsi":                   round(rsi, 1),
+                "macd_histogram_slope":  round(macd_slope, 6),
+                "ma_trend":              ma_trend,
+                "momentum_pct":          momentum,
+                "confidence_score":      round(confidence, 2),
+                "explanation":           explanation,
+                "market_regime":         market_regime,
+                "ml_probability_1r":     None,
+                "ml_probability_2r":     None,
+            }
+        }
+    return analyze_market_structure
 
 
 # ---------------------------------------------------------------------------
