@@ -18,6 +18,7 @@ def make_state(symbol: str = "BTCUSDT", **overrides) -> dict:
         "news_data":    [],
         "onchain_data": None,
         "social_data":  None,
+        "funding_rate_data": None,
         "context":      None,
         "sentiment_analysis":        None,
         "market_structure_analysis": None,

@@ -1,19 +1,27 @@
+# graph/state.py
 from __future__ import annotations
 import operator
 from typing import Annotated, Literal, Optional, Union
 from typing import TypedDict
 
 
+class FundingRateSummary(TypedDict):
+    rate:         float
+    funding_time: str
+    source:       str
+
+
 class NormalizedMarketContext(TypedDict):
     """Produced by aggregate_raw. All downstream nodes read only from this."""
-    symbol:          str
-    price_summary:   dict   # {price, change_24h_pct, volume_24h, high_24h, low_24h, ohlcv_24h}
-    news_items:      list[dict]   # [{headline, source, published_at, url}]
-    onchain_summary: dict
-    social_summary:  dict   # {mention_volume, sentiment_hint, sample_posts}
-    data_gaps:       list[str]
-    price_source:    str    # binance | coingecko | mock | unknown
-    news_source:     str    # rss | mock | unknown
+    symbol:               str
+    price_summary:        dict
+    news_items:           list[dict]
+    onchain_summary:      dict
+    social_summary:       dict
+    data_gaps:            list[str]
+    price_source:         str
+    news_source:          str
+    funding_rate_summary: Optional[FundingRateSummary]
 
 
 class AnalysisResult(TypedDict):
@@ -21,7 +29,7 @@ class AnalysisResult(TypedDict):
     sentiment_score:   Optional[float]
     sentiment_label:   Optional[str]
     sentiment_drivers: Optional[list[str]]
-    market_structure:  Optional[dict]   # full MarketStructureAnalysis dict
+    market_structure:  Optional[dict]
     risk_level:        Optional[str]
     risk_factors:      Optional[list[str]]
 
@@ -38,12 +46,13 @@ class IntelligenceReport(TypedDict):
     risk_warnings:    list[str]
     narrative:        str
     data_gaps:        list[str]
-    error:            Optional[str]    # always None on success; present for unified API schema
+    error:            Optional[str]
     llm_used:         bool
-    market_structure: Optional[dict]   # full MarketStructureAnalysis dict
-    price_source:     str              # binance | coingecko | mock | unknown
-    news_source:      str              # rss | mock | unknown
-    analysis_engine:  str              # rule-based | claude (future)
+    market_structure: Optional[dict]
+    price_source:     str
+    news_source:      str
+    analysis_engine:  str
+    funding_source:   str
 
 
 class ErrorReport(TypedDict):
@@ -63,10 +72,11 @@ class AgentState(TypedDict):
     requested_at: str
 
     # Raw collector outputs
-    price_data:   Optional[dict]
-    news_data:    Annotated[list, operator.add]   # reducer-safe: collectors append
-    onchain_data: Optional[dict]
-    social_data:  Optional[dict]
+    price_data:        Optional[dict]
+    news_data:         Annotated[list, operator.add]
+    onchain_data:      Optional[dict]
+    social_data:       Optional[dict]
+    funding_rate_data: Optional[dict]
 
     # Post-aggregation context
     context: Optional[NormalizedMarketContext]
