@@ -11,19 +11,25 @@ from config.settings import Settings, get_settings
 from data_sources.factory import build_adapters
 from graph.pipeline import build_graph
 from graph.trend import inject_trend_signal
-from publishers.telegram_publisher import format_intelligence_report
+from publishers.telegram_publisher import format_history_summary, format_intelligence_report
 from storage.report_history import ReportHistoryRepository
 
 logger = logging.getLogger(__name__)
 
 _SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9]{2,19}$")
 
+_DEFAULT_HISTORY_LIMIT = 5
+_MAX_HISTORY_LIMIT     = 10
+
 HELP_TEXT = (
     "📊 <b>Crypto Intelligence Bot</b>\n\n"
     "<b>Commands:</b>\n"
     "/help — Show this message\n"
     "/report — Generate reports for all watched symbols\n"
-    "/report &lt;SYMBOL&gt; — Generate report for one symbol\n\n"
+    "/report &lt;SYMBOL&gt; — Generate report for one symbol\n"
+    "/history — Show last 5 reports for all watched symbols\n"
+    "/history &lt;SYMBOL&gt; — Show last 5 reports for one symbol\n"
+    "/history &lt;SYMBOL&gt; &lt;N&gt; — Show last N reports (max 10)\n\n"
     "<b>Examples:</b>\n"
     "<code>/report BTCUSDT</code>\n"
     "<code>/report ETHUSDT</code>\n"
@@ -91,6 +97,47 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
 
 
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings                   = context.bot_data["settings"]
+    repo: ReportHistoryRepository | None = context.bot_data.get("repo")
+
+    args = list(context.args or [])
+
+    if args:
+        symbol = args[0].upper()
+        if not _SYMBOL_RE.match(symbol):
+            await update.message.reply_text(
+                f"❌ Invalid symbol: <code>{symbol}</code>\n"
+                "Use uppercase letters only, e.g. <code>/history BTCUSDT</code>",
+                parse_mode="HTML",
+            )
+            return
+        symbols = [symbol]
+
+        limit = _DEFAULT_HISTORY_LIMIT
+        if len(args) >= 2:
+            try:
+                limit = int(args[1])
+            except (ValueError, TypeError):
+                limit = _DEFAULT_HISTORY_LIMIT
+        limit = min(max(limit, 1), _MAX_HISTORY_LIMIT)
+    else:
+        symbols = [s.strip() for s in settings.WATCH_SYMBOLS.split(",") if s.strip()]
+        limit   = _DEFAULT_HISTORY_LIMIT
+
+    for symbol in symbols:
+        try:
+            records = await repo.get_latest(symbol, limit=limit)
+            msg = format_history_summary(symbol, records, settings.DISPLAY_TIMEZONE)
+            await update.message.reply_text(msg, parse_mode="HTML")
+        except Exception as exc:
+            logger.exception("Failed to fetch history for %s", symbol)
+            await update.message.reply_text(
+                f"❌ Failed to fetch history for <code>{symbol}</code>: {exc}",
+                parse_mode="HTML",
+            )
+
+
 # ---------------------------------------------------------------------------
 # Async post-init hook: runs in the bot's event loop before polling starts
 # ---------------------------------------------------------------------------
@@ -135,7 +182,8 @@ def build_bot(settings: Settings) -> Application:
 
     app.add_handler(CommandHandler("start",  start_command))
     app.add_handler(CommandHandler("help",   help_command))
-    app.add_handler(CommandHandler("report", report_command))
+    app.add_handler(CommandHandler("report",  report_command))
+    app.add_handler(CommandHandler("history", history_command))
 
     return app
 

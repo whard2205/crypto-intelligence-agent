@@ -6,6 +6,7 @@ from telegram_bot.main import (
     HELP_TEXT,
     build_bot,
     help_command,
+    history_command,
     report_command,
     setup_bot_data,
     start_command,
@@ -227,3 +228,88 @@ async def test_setup_bot_data_sets_repo_in_bot_data():
 
     assert application.bot_data["repo"] is mock_repo_instance
     MockRepo.assert_called_once_with(settings.DB_PATH)
+
+
+# ---------------------------------------------------------------------------
+# history_command
+# ---------------------------------------------------------------------------
+
+async def test_history_command_no_args_calls_get_latest_for_all_symbols():
+    settings = _make_settings("BTCUSDT,ETHUSDT")
+    graph    = _make_graph()
+    repo     = _make_repo()
+    update   = _make_update()
+    context  = _make_context(settings, graph, repo=repo, args=[])
+
+    await history_command(update, context)
+
+    assert repo.get_latest.call_count == 2
+    called_symbols = {c.args[0] for c in repo.get_latest.call_args_list}
+    assert called_symbols == {"BTCUSDT", "ETHUSDT"}
+
+
+async def test_history_command_single_symbol_calls_get_latest_once():
+    settings = _make_settings()
+    graph    = _make_graph()
+    repo     = _make_repo()
+    update   = _make_update()
+    context  = _make_context(settings, graph, repo=repo, args=["BTCUSDT"])
+
+    await history_command(update, context)
+
+    repo.get_latest.assert_called_once()
+    assert repo.get_latest.call_args.args[0] == "BTCUSDT"
+
+
+async def test_history_command_custom_limit_passed_to_repo():
+    settings = _make_settings()
+    graph    = _make_graph()
+    repo     = _make_repo()
+    update   = _make_update()
+    context  = _make_context(settings, graph, repo=repo, args=["BTCUSDT", "7"])
+
+    await history_command(update, context)
+
+    repo.get_latest.assert_called_once()
+    assert repo.get_latest.call_args.kwargs["limit"] == 7
+
+
+async def test_history_command_limit_capped_at_10():
+    settings = _make_settings()
+    graph    = _make_graph()
+    repo     = _make_repo()
+    update   = _make_update()
+    context  = _make_context(settings, graph, repo=repo, args=["BTCUSDT", "20"])
+
+    await history_command(update, context)
+
+    repo.get_latest.assert_called_once()
+    assert repo.get_latest.call_args.kwargs["limit"] == 10
+
+
+async def test_history_command_empty_result_sends_no_history_message():
+    settings = _make_settings()
+    graph    = _make_graph()
+    repo     = _make_repo()  # get_latest returns [] by default
+    update   = _make_update()
+    context  = _make_context(settings, graph, repo=repo, args=["BTCUSDT"])
+
+    await history_command(update, context)
+
+    reply_text = update.message.reply_text.call_args[0][0]
+    assert "tidak ada history" in reply_text.lower()
+
+
+async def test_history_command_repo_error_sends_error_reply():
+    from unittest.mock import AsyncMock as _AM
+    settings = _make_settings()
+    graph    = _make_graph()
+    repo     = _make_repo()
+    repo.get_latest = _AM(side_effect=RuntimeError("db error"))
+    update   = _make_update()
+    context  = _make_context(settings, graph, repo=repo, args=["BTCUSDT"])
+
+    await history_command(update, context)
+
+    reply_text = update.message.reply_text.call_args[0][0]
+    assert "❌" in reply_text
