@@ -27,6 +27,15 @@ def _utc_to_local(iso_str: str, tz_name: str) -> str:
         return iso_str
 
 
+def _utc_to_local_short(iso_str: str, tz_name: str) -> str:
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        local_dt = dt.astimezone(ZoneInfo(tz_name))
+        return local_dt.strftime("%d %b %H:%M")
+    except Exception:
+        return iso_str
+
+
 _BIAS_ARROW = {"bullish": "↑", "bearish": "↓", "neutral": "→"}
 _BIAS_EMOJI = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}
 
@@ -131,6 +140,29 @@ def format_intelligence_report(report: dict, tz_name: str = "Asia/Jakarta") -> s
         f"<i>Engine: {engine_label}  |  Price: {price_src}  |  "
         f"News: {news_src}  |  Funding: {funding_src}</i>",
     ]
+
+    return "\n".join(lines)
+
+
+def format_history_summary(symbol: str, records: list[dict], tz_name: str) -> str:
+    """Compact multi-line history summary for one symbol. Returns HTML for parse_mode='HTML'."""
+    if not records:
+        return f"<i>Tidak ada history untuk {_html(symbol)}.</i>"
+
+    lines = [f"📊 <b>{_html(symbol)}</b> — {len(records)} laporan terakhir", ""]
+
+    for r in records:
+        ts    = _utc_to_local_short(r.get("generated_at", ""), tz_name)
+        bias  = r.get("market_bias", "neutral")
+        emoji = _BIAS_EMOJI.get(bias, "🟡")
+        conf  = r.get("confidence_score")
+        conf_s = f"{conf:.2f}" if conf is not None else "—"
+
+        signals      = r.get("key_signals") or []
+        bias_changed = any(str(s).startswith("Bias changed:") for s in signals)
+        change_str   = "↗ bias berubah" if bias_changed else "—"
+
+        lines.append(f"📅 {ts} | {emoji} {bias.capitalize()} | conf: {conf_s} | {change_str}")
 
     return "\n".join(lines)
 
