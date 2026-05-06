@@ -23,6 +23,8 @@ def _deterministic_supervisor(state: AgentState) -> dict:
     sentiment_score = analysis.get("sentiment_score") or 0.0
     sentiment_label = analysis.get("sentiment_label") or "neutral"
     ms              = analysis.get("market_structure") or {}
+    regime_data     = ms.get("market_regime")
+    regime          = regime_data.get("regime") if regime_data else None
     risk_level      = analysis.get("risk_level") or "medium"
     risk_factors    = list(analysis.get("risk_factors") or [])
     data_gaps       = list(context.get("data_gaps") or [])
@@ -80,6 +82,10 @@ def _deterministic_supervisor(state: AgentState) -> dict:
     gap_penalty = 0.05 * len(data_gaps)
     confidence  = round(max(0.10, min(1.0, base_conf - gap_penalty)), 2)
 
+    _REGIME_BIAS = {"bullish": "bull_trending", "bearish": "bear_trending", "neutral": "ranging"}
+    if regime and _REGIME_BIAS.get(market_bias) == regime:
+        confidence = round(min(1.0, confidence + 0.05), 2)
+
     # ------------------------------------------------------------------
     # 3. Key signals
     # ------------------------------------------------------------------
@@ -102,6 +108,8 @@ def _deterministic_supervisor(state: AgentState) -> dict:
         )
     if ma_trend in ("uptrend", "downtrend"):
         key_signals.append(f"MA trend: {ma_trend}")
+    if regime:
+        key_signals.append(f"Market Regime Context: {regime}")
     key_signals.append(f"RSI: {rsi:.0f}")
 
     # Funding rate key signal

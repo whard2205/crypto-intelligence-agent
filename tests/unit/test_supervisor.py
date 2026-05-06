@@ -141,3 +141,60 @@ async def test_rsi_70_narrative_mentions_pullback():
     state  = _state_with_rsi(rsi=71.0)
     report = (await node(state))["report"]
     assert "pullback" in report["narrative"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Market regime context injection
+# ---------------------------------------------------------------------------
+
+def _ms_with_regime(regime: str | None) -> dict:
+    base = {
+        "bias": "bullish", "rsi": 58.0, "ma_trend": "uptrend",
+        "confidence_score": 0.65, "explanation": "BOS bullish",
+        "swing_highs": [65100.0], "swing_lows": [63900.0],
+        "liquidity_sweeps": [], "order_blocks": [],
+        "bos_choch": [{"type": "BOS", "direction": "bullish",
+                       "break_level": 65100.0, "candle_idx": 25}],
+        "volume_confirmed": True, "invalidation_level": 63900.0,
+        "macd_histogram_slope": 0.002, "momentum_pct": 1.2,
+        "ml_probability_1r": None, "ml_probability_2r": None,
+        "market_regime": None,
+    }
+    if regime is not None:
+        base["market_regime"] = {"regime": regime, "n_states": 3, "source": "hmm"}
+    return base
+
+
+async def test_supervisor_aligned_regime_adds_signal_and_boosts_confidence():
+    node = make_supervisor(Settings(LLM_ENABLED=False))
+
+    state_no      = _state_with_full_analysis()
+    state_aligned = _state_with_full_analysis(market_structure=_ms_with_regime("bull_trending"))
+
+    result_no      = await node(state_no)
+    result_aligned = await node(state_aligned)
+
+    signals = result_aligned["report"]["key_signals"]
+    assert any("Market Regime Context: bull_trending" in s for s in signals)
+    assert result_aligned["report"]["confidence_score"] >= result_no["report"]["confidence_score"]
+
+
+async def test_supervisor_misaligned_regime_adds_signal_no_boost():
+    node = make_supervisor(Settings(LLM_ENABLED=False))
+
+    state_no       = _state_with_full_analysis()
+    state_mismatch = _state_with_full_analysis(market_structure=_ms_with_regime("ranging"))
+
+    result_no       = await node(state_no)
+    result_mismatch = await node(state_mismatch)
+
+    signals = result_mismatch["report"]["key_signals"]
+    assert any("Market Regime Context: ranging" in s for s in signals)
+    assert result_mismatch["report"]["confidence_score"] == result_no["report"]["confidence_score"]
+
+
+async def test_supervisor_none_regime_no_injection():
+    node = make_supervisor(Settings(LLM_ENABLED=False))
+    state = _state_with_full_analysis()
+    result = await node(state)
+    assert not any("Market Regime Context" in s for s in result["report"]["key_signals"])
