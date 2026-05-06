@@ -1,6 +1,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
-from graph.state import AgentState, NormalizedMarketContext, AnalysisResult
+from typing import Optional
+from graph.state import AgentState, NormalizedMarketContext, AnalysisResult, FundingRateSummary
 
 
 async def aggregate_raw(state: AgentState) -> dict:
@@ -9,10 +10,11 @@ async def aggregate_raw(state: AgentState) -> dict:
     Critical check: if price_data is None, sets report to ErrorReport and
     route_after_aggregate will send the graph to error_exit.
     """
-    price_data   = state.get("price_data")
-    news_data    = state.get("news_data") or []
-    onchain_data = state.get("onchain_data")
-    social_data  = state.get("social_data")
+    price_data        = state.get("price_data")
+    news_data         = state.get("news_data") or []
+    onchain_data      = state.get("onchain_data")
+    social_data       = state.get("social_data")
+    funding_rate_data = state.get("funding_rate_data")
 
     if price_data is None:
         return {
@@ -55,7 +57,6 @@ async def aggregate_raw(state: AgentState) -> dict:
 
     price_source = price_data.get("source", "unknown")
 
-    # Derive news source from item metadata: MockNewsAdapter stamps "MockNews"
     if not news_data:
         news_source = "unknown"
     elif all(item.get("source") == "MockNews" for item in news_data):
@@ -63,15 +64,30 @@ async def aggregate_raw(state: AgentState) -> dict:
     else:
         news_source = "rss"
 
+    funding_rate_summary: Optional[FundingRateSummary]
+    if funding_rate_data is not None:
+        funding_rate_summary = {
+            "rate":         funding_rate_data["funding_rate"],
+            "funding_time": funding_rate_data.get("funding_time", ""),
+            "source":       funding_rate_data.get("source", "unknown"),
+        }
+    else:
+        funding_rate_summary = None
+
+    all_gaps = list(set(state.get("data_gaps", [])))
+    if funding_rate_summary is None and "funding_unavailable" not in all_gaps:
+        all_gaps.append("funding_unavailable")
+
     context: NormalizedMarketContext = {
-        "symbol":          state["symbol"],
-        "price_summary":   price_summary,
-        "news_items":      news_items,
-        "onchain_summary": onchain_data or {},
-        "social_summary":  social_summary,
-        "data_gaps":       list(set(state.get("data_gaps", []))),
-        "price_source":    price_source,
-        "news_source":     news_source,
+        "symbol":               state["symbol"],
+        "price_summary":        price_summary,
+        "news_items":           news_items,
+        "onchain_summary":      onchain_data or {},
+        "social_summary":       social_summary,
+        "data_gaps":            all_gaps,
+        "price_source":         price_source,
+        "news_source":          news_source,
+        "funding_rate_summary": funding_rate_summary,
     }
 
     return {"context": context}

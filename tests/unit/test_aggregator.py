@@ -81,3 +81,26 @@ async def test_merge_analysis_handles_none_inputs():
     analysis = result["analysis"]
     assert analysis["sentiment_label"] is None
     assert analysis["market_structure"] is None
+
+
+async def test_aggregate_includes_funding_summary():
+    state = _state_with_price()
+    state["funding_rate_data"] = {
+        "symbol": "BTCUSDT", "funding_rate": 0.00080,
+        "funding_time": "2026-05-06T08:00:00Z", "source": "binance",
+    }
+    result = await aggregate_raw(state)
+    ctx = result["context"]
+    assert ctx["funding_rate_summary"] is not None
+    assert ctx["funding_rate_summary"]["rate"] == pytest.approx(0.00080)
+    assert ctx["funding_rate_summary"]["source"] == "binance"
+    assert ctx["funding_rate_summary"]["funding_time"] == "2026-05-06T08:00:00Z"
+
+
+async def test_aggregate_funding_none_when_missing():
+    state = _state_with_price()
+    # funding_rate_data is already None in make_state() default
+    result = await aggregate_raw(state)
+    ctx = result["context"]
+    assert ctx["funding_rate_summary"] is None
+    assert "funding_unavailable" in ctx["data_gaps"]
