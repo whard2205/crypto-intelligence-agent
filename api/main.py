@@ -59,6 +59,7 @@ async def lifespan(app: FastAPI):
             )
         else:
             from telegram_bot.main import build_bot, setup_bot_data
+            # MVP: no rollback on partial init failure; exception propagates and server aborts
             bot_application = build_bot(settings)
             await bot_application.initialize()
             await setup_bot_data(bot_application, settings)
