@@ -313,3 +313,42 @@ async def test_history_command_repo_error_sends_error_reply():
 
     reply_text = update.message.reply_text.call_args[0][0]
     assert "❌" in reply_text
+
+
+async def test_history_command_no_repo_sends_unavailable_message():
+    settings = _make_settings()
+    graph    = _make_graph()
+    update   = _make_update()
+    context  = _make_context(settings, graph, repo=None, args=["BTCUSDT"])
+
+    await history_command(update, context)
+
+    reply_text = update.message.reply_text.call_args[0][0]
+    assert "⚠️" in reply_text
+
+
+async def test_history_command_invalid_symbol_sends_error():
+    settings = _make_settings()
+    graph    = _make_graph()
+    repo     = _make_repo()
+    update   = _make_update()
+    context  = _make_context(settings, graph, repo=repo, args=["bad!sym"])
+
+    await history_command(update, context)
+
+    reply_text = update.message.reply_text.call_args[0][0]
+    assert "Invalid symbol" in reply_text
+    repo.get_latest.assert_not_called()
+
+
+async def test_history_command_non_digit_limit_uses_default():
+    settings = _make_settings()
+    graph    = _make_graph()
+    repo     = _make_repo()
+    update   = _make_update()
+    context  = _make_context(settings, graph, repo=repo, args=["BTCUSDT", "abc"])
+
+    await history_command(update, context)
+
+    repo.get_latest.assert_called_once()
+    assert repo.get_latest.call_args.kwargs["limit"] == 5

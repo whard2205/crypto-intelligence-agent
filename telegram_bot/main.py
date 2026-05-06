@@ -101,7 +101,16 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     settings: Settings                   = context.bot_data["settings"]
     repo: ReportHistoryRepository | None = context.bot_data.get("repo")
 
+    if not repo:
+        await update.message.reply_text(
+            "⚠️ History is not available (storage not initialised).",
+            parse_mode="HTML",
+        )
+        return
+
     args = list(context.args or [])
+
+    limit = _DEFAULT_HISTORY_LIMIT
 
     if args:
         symbol = args[0].upper()
@@ -114,16 +123,14 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         symbols = [symbol]
 
-        limit = _DEFAULT_HISTORY_LIMIT
         if len(args) >= 2:
             try:
                 limit = int(args[1])
             except (ValueError, TypeError):
-                limit = _DEFAULT_HISTORY_LIMIT
+                pass  # keep default
         limit = min(max(limit, 1), _MAX_HISTORY_LIMIT)
     else:
         symbols = [s.strip() for s in settings.WATCH_SYMBOLS.split(",") if s.strip()]
-        limit   = _DEFAULT_HISTORY_LIMIT
 
     for symbol in symbols:
         try:
