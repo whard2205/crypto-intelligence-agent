@@ -16,7 +16,45 @@ async def lifespan(app: FastAPI):
     await repo.init_db()
     app.state.repo = repo
     logger.info("Report history DB initialized at %s", settings.DB_PATH)
+
+    scheduler = None
+    if settings.SCHEDULER_ENABLED:
+        if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
+            logger.warning(
+                "SCHEDULER_ENABLED=true but TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing "
+                "— scheduler will not start"
+            )
+        else:
+            if settings.SCHEDULER_INTERVAL_HOURS < 1:
+                raise ValueError(
+                    f"SCHEDULER_INTERVAL_HOURS must be >= 1, "
+                    f"got {settings.SCHEDULER_INTERVAL_HOURS}"
+                )
+            import telegram
+            from publishers.telegram_publisher import TelegramPublisher
+            from data_sources.factory import build_adapters
+            from graph.pipeline import build_graph
+            from scheduler.runner import build_scheduler
+
+            bot = telegram.Bot(token=settings.TELEGRAM_BOT_TOKEN)
+            publisher = TelegramPublisher(
+                bot, settings.TELEGRAM_CHAT_ID, settings.DISPLAY_TIMEZONE
+            )
+            adapters = build_adapters(settings)
+            graph = build_graph(settings, **adapters)
+            scheduler = build_scheduler(settings, graph, publisher, repo)
+            scheduler.start()
+            logger.info(
+                "Scheduler started — interval=%dh symbols=%s",
+                settings.SCHEDULER_INTERVAL_HOURS,
+                settings.WATCH_SYMBOLS,
+            )
+
     yield
+
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
+        logger.info("Scheduler stopped")
 
 
 app = FastAPI(
