@@ -103,14 +103,15 @@ def _deterministic_supervisor(state: AgentState) -> dict:
     if ma_trend in ("uptrend", "downtrend"):
         key_signals.append(f"MA trend: {ma_trend}")
     key_signals.append(f"RSI: {rsi:.0f}")
-    drivers = analysis.get("sentiment_drivers") or []
-    key_signals.extend(drivers[:1])
 
     # Funding rate key signal
     funding = context.get("funding_rate_summary")
     if funding is not None and abs(funding["rate"]) >= 0.0005:
         direction = "longs" if funding["rate"] > 0 else "shorts"
         key_signals.append(f"Funding rate {funding['rate']:+.3%} ({direction} crowded)")
+
+    drivers = analysis.get("sentiment_drivers") or []
+    key_signals.extend(drivers[:1])
 
     # Funding source provenance
     funding_source = funding["source"] if funding is not None else "unavailable"
@@ -172,7 +173,7 @@ def _deterministic_supervisor(state: AgentState) -> dict:
         "generated_at":     datetime.now(timezone.utc).isoformat(),
         "market_bias":      market_bias,
         "confidence_score": confidence,
-        "key_signals":      key_signals[:5] or ["Insufficient signal data"],
+        "key_signals":      key_signals[:6] or ["Insufficient signal data"],
         "risk_warnings":    risk_warnings[:5],
         "narrative":        narrative,
         "data_gaps":        data_gaps,
