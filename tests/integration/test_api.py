@@ -87,7 +87,7 @@ def test_report_schema_matches_expected_fields(client):
         "run_id", "symbol", "requested_at", "generated_at",
         "market_bias", "confidence_score", "key_signals",
         "risk_warnings", "narrative", "data_gaps", "llm_used",
-        "price_source", "news_source", "analysis_engine",
+        "price_source", "news_source", "analysis_engine", "funding_source",
     }
     assert required.issubset(body.keys()), f"Missing keys: {required - body.keys()}"
     assert isinstance(body["data_gaps"], list)
@@ -135,3 +135,11 @@ def test_api_auth_enabled_requires_key(auth_client):
     # Correct key → 200
     resp = auth_client.get("/report?symbol=BTCUSDT", headers={"X-API-Key": "test-secret"})
     assert resp.status_code == 200
+
+
+def test_report_response_includes_funding_source(client):
+    resp = client.get("/report?symbol=BTCUSDT")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "funding_source" in body
+    assert isinstance(body["funding_source"], str)

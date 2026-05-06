@@ -121,13 +121,15 @@ def format_intelligence_report(report: dict, tz_name: str = "Asia/Jakarta") -> s
         lines += ["", f"<i>⚡ Limited data: {_html(', '.join(gaps))}</i>"]
 
     # Footer — provenance
-    llm_used        = report.get("llm_used", False)
-    engine_label    = "Claude AI" if llm_used else "rule-based"
-    price_src       = report.get("price_source", "unknown")
-    news_src        = report.get("news_source", "unknown")
+    llm_used     = report.get("llm_used", False)
+    engine_label = "Claude AI" if llm_used else "rule-based"
+    price_src    = report.get("price_source", "unknown")
+    news_src     = report.get("news_source", "unknown")
+    funding_src  = report.get("funding_source", "unavailable")
     lines += [
         "",
-        f"<i>Engine: {engine_label}  |  Price: {price_src}  |  News: {news_src}</i>",
+        f"<i>Engine: {engine_label}  |  Price: {price_src}  |  "
+        f"News: {news_src}  |  Funding: {funding_src}</i>",
     ]
 
     return "\n".join(lines)
