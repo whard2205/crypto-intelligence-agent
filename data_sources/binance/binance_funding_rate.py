@@ -19,8 +19,7 @@ class BinanceFundingRateAdapter(DataSourceAdapter):
             if resp.status_code == 404:
                 return None
             resp.raise_for_status()
-
-        data = resp.json()
+            data = resp.json()
         if not data:
             return None
 
