@@ -31,11 +31,11 @@ Funding rate stored as raw decimal (0.00080 = 0.08%):
 
 | `abs(rate)` | Label | `risk_score` impact | Message |
 |---|---|---|---|
-| `> 0.0015` | extreme | +2 | `"Extreme funding rate {rate:+.3%} — {direction} overextended"` |
-| `> 0.0005` | moderate | +1 | `"Elevated funding rate {rate:+.3%} — {direction} crowded"` |
-| `≤ 0.0005` | neutral | 0 | No signal generated |
+| `>= 0.0015` | extreme | +2 | `"Extreme funding rate {rate:+.3%} — {direction} overextended"` |
+| `>= 0.0005` | moderate | +1 | `"Elevated funding rate {rate:+.3%} — {direction} crowded"` |
+| `< 0.0005` | neutral | 0 | No signal generated |
 
-`direction` = `"longs"` when `rate > 0`, `"shorts"` when `rate < 0`.
+Thresholds are inclusive (`>=`). `direction` = `"longs"` when `rate > 0`, `"shorts"` when `rate < 0`.
 
 ---
 
@@ -63,6 +63,7 @@ Funding rate stored as raw decimal (0.00080 = 0.08%):
 | `agents/analyzers/risk_analyzer.py` | Read `funding_rate_summary`; apply two-level threshold logic |
 | `agents/supervisor.py` | Add funding rate key_signal; add `funding_source` to report |
 | `api/schemas.py` | Add `funding_source: str = "unavailable"` to `IntelligenceReportResponse` |
+| `publishers/telegram_publisher.py` | Add `| Funding: {funding_source}` to footer |
 
 ---
 
@@ -73,15 +74,19 @@ Funding rate stored as raw decimal (0.00080 = 0.08%):
 ```python
 {
     "symbol":       "BTCUSDT",
-    "funding_rate": 0.00080,       # raw decimal; 0.00080 = 0.08%
-    "funding_time": "2026-05-06T08:00:00Z",  # ISO string, empty string if absent
+    "funding_rate": 0.00080,              # float parsed from "fundingRate" string
+    "funding_time": "2026-05-06T08:00:00Z",  # ISO UTC string parsed from fundingTime ms timestamp; "" if absent
     "source":       "binance",
 }
 # Returns None when:
 #   - symbol not found in futures (404)
-#   - Binance returns empty list
+#   - Binance returns empty list []
 # Raises on other HTTP errors (FallbackAdapter catches)
 ```
+
+**Parsing rules:**
+- `fundingRate`: cast string `"0.00080000"` → `float(0.00080)`
+- `fundingTime`: millisecond int timestamp → `datetime.utcfromtimestamp(ms/1000).isoformat() + "Z"`; empty string if key absent
 
 ### `MockFundingRateAdapter` values
 
@@ -179,10 +184,10 @@ if funding is not None:
     abs_rate  = abs(rate)
     direction = "longs" if rate > 0 else "shorts"
 
-    if abs_rate > 0.0015:
+    if abs_rate >= 0.0015:
         risk_factors.append(f"Extreme funding rate {rate:+.3%} — {direction} overextended")
         risk_score += 2
-    elif abs_rate > 0.0005:
+    elif abs_rate >= 0.0005:
         risk_factors.append(f"Elevated funding rate {rate:+.3%} — {direction} crowded")
         risk_score += 1
 # if funding is None: no signal, no error
@@ -195,7 +200,7 @@ if funding is not None:
 ```python
 # key_signals (after RSI line)
 funding = context.get("funding_rate_summary")
-if funding is not None and abs(funding["rate"]) > 0.0005:
+if funding is not None and abs(funding["rate"]) >= 0.0005:
     direction = "longs" if funding["rate"] > 0 else "shorts"
     key_signals.append(f"Funding rate {funding['rate']:+.3%} ({direction} crowded)")
 
@@ -232,6 +237,10 @@ Assert on public output only (`risk_level`, `risk_factors`).
 | `test_moderate_negative_rate` | -0.0006 | "Elevated...shorts crowded" in risk_factors |
 | `test_neutral_rate_no_signal` | +0.0001 | No funding string in risk_factors |
 | `test_missing_funding_summary` | `None` | No error; no funding string in risk_factors |
+| `test_boundary_moderate_positive` | +0.0005 (exact) | "Elevated...longs crowded" in risk_factors |
+| `test_boundary_moderate_negative` | -0.0005 (exact) | "Elevated...shorts crowded" in risk_factors |
+| `test_boundary_extreme_positive` | +0.0015 (exact) | "Extreme...longs overextended" in risk_factors |
+| `test_boundary_extreme_negative` | -0.0015 (exact) | "Extreme...shorts overextended" in risk_factors |
 
 ### `tests/unit/test_supervisor_funding.py`
 
@@ -272,10 +281,42 @@ Assert on public output only (`risk_level`, `risk_factors`).
 
 ---
 
+## Telegram Footer
+
+Update `publishers/telegram_publisher.py` footer line:
+
+```
+Before: Engine: rule-based  |  Price: binance  |  News: rss
+After:  Engine: rule-based  |  Price: binance  |  News: rss  |  Funding: binance
+```
+
+`funding_source` value comes from `report["funding_source"]`. No other Telegram formatting changes needed.
+
+---
+
+## Collector Safety
+
+`make_funding_rate_collector` wraps the adapter call in `try/except` — unlike `price_collector` (where failure is fatal). Funding rate is supplementary data; a crash must not block the report.
+
+```python
+def make_funding_rate_collector(adapter: DataSourceAdapter):
+    async def collect_funding_rate(state: AgentState) -> dict:
+        try:
+            result = await adapter.fetch(state["symbol"])
+            if result is None:
+                return {"data_gaps": ["funding_unavailable"]}
+            return {"funding_rate_data": result}
+        except Exception:
+            return {"data_gaps": ["funding_unavailable"]}
+    return collect_funding_rate
+```
+
+---
+
 ## Out of Scope
 
 - HMM regime detection
 - APScheduler (Phase 6 scheduler)
-- Telegram bot formatting changes for funding rate (plain text output already shows key_signals)
 - Historical funding rate (only latest rate needed)
 - Funding rate chart / visualization
+- XGBoost, Monte Carlo, Claude integration
