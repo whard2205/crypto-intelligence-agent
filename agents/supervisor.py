@@ -6,6 +6,9 @@ from graph.state import AgentState, IntelligenceReport
 # Warnings that carry no real risk signal — do not trigger a risk_level upgrade.
 _TRIVIAL_WARNINGS = frozenset({"No significant risk factors detected"})
 
+# Maps supervisor market_bias → expected HMM regime label for confidence alignment check.
+_REGIME_BIAS = {"bullish": "bull_trending", "bearish": "bear_trending", "neutral": "ranging"}
+
 
 def make_supervisor(settings: Settings):
     async def supervisor(state: AgentState) -> dict:
@@ -82,7 +85,6 @@ def _deterministic_supervisor(state: AgentState) -> dict:
     gap_penalty = 0.05 * len(data_gaps)
     confidence  = round(max(0.10, min(1.0, base_conf - gap_penalty)), 2)
 
-    _REGIME_BIAS = {"bullish": "bull_trending", "bearish": "bear_trending", "neutral": "ranging"}
     if regime and _REGIME_BIAS.get(market_bias) == regime:
         confidence = round(min(1.0, confidence + 0.05), 2)
 
