@@ -10,6 +10,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from config.settings import Settings, get_settings
 from data_sources.factory import build_adapters
 from graph.pipeline import build_graph
+from graph.trend import inject_trend_signal
 from publishers.telegram_publisher import format_intelligence_report
 from storage.report_history import ReportHistoryRepository
 
@@ -72,11 +73,13 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             result = await graph.ainvoke(_make_initial_state(symbol))
             report = result["report"]
 
-            if repo and not report.get("error"):
-                try:
-                    await repo.save(report)
-                except Exception:
-                    logger.exception("Failed to save report for %s to history", symbol)
+            if repo:
+                report = await inject_trend_signal(report, repo)
+                if not report.get("error"):
+                    try:
+                        await repo.save(report)
+                    except Exception:
+                        logger.exception("Failed to save report for %s to history", symbol)
 
             msg = format_intelligence_report(report, settings.DISPLAY_TIMEZONE)
             await update.message.reply_text(msg, parse_mode="HTML")
@@ -143,6 +146,7 @@ def _make_initial_state(symbol: str) -> dict:
         "news_data":                 [],
         "onchain_data":              None,
         "social_data":               None,
+        "funding_rate_data":         None,
         "context":                   None,
         "sentiment_analysis":        None,
         "market_structure_analysis": None,
