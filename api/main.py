@@ -58,11 +58,11 @@ async def lifespan(app: FastAPI):
                 "— bot will not start"
             )
         else:
-            from telegram_bot.main import build_bot, setup_bot_data
+            from telegram_bot.main import build_bot, _post_init
             # MVP: no rollback on partial init failure; exception propagates and server aborts
             bot_application = build_bot(settings)
             await bot_application.initialize()
-            await setup_bot_data(bot_application, settings)
+            await _post_init(bot_application)   # sets up repo + registers /commands in Telegram UI
             await bot_application.start()
             await bot_application.updater.start_polling()
             logger.info("Telegram bot started — polling for commands")
