@@ -1,8 +1,19 @@
+import os
+from unittest.mock import patch
+
 from config.settings import Settings
 
 
 def test_defaults_are_cost_safe():
-    s = Settings()
+    # Suppress .env overrides so we exercise the code-level defaults.
+    env_keys = [
+        "ENV", "MOCK_MODE", "LLM_ENABLED", "DAILY_LLM_BUDGET_IDR",
+        "MAX_LLM_CALLS_PER_DAY", "SCHEDULER_ENABLED", "SCHEDULER_INTERVAL_HOURS",
+        "TELEGRAM_BOT_ENABLED", "ML_ENABLED", "MONTE_CARLO_ENABLED",
+    ]
+    clean_env = {k: v for k, v in os.environ.items() if k not in env_keys}
+    with patch.dict(os.environ, clean_env, clear=True):
+        s = Settings(_env_file=None)
     assert s.ENV == "development"
     assert s.MOCK_MODE is True
     assert s.LLM_ENABLED is False
