@@ -4,7 +4,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from config.settings import Settings, get_settings
@@ -149,8 +149,18 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # Async post-init hook: runs in the bot's event loop before polling starts
 # ---------------------------------------------------------------------------
 
+_BOT_COMMANDS = [
+    BotCommand("start",   "Show help"),
+    BotCommand("help",    "Show help message"),
+    BotCommand("report",  "Generate report for all watched symbols"),
+    BotCommand("history", "Show last 5 reports per symbol"),
+]
+
+
 async def _post_init(application: Application) -> None:
     await setup_bot_data(application, application.bot_data["settings"])
+    await application.bot.set_my_commands(_BOT_COMMANDS)
+    logger.info("Telegram bot commands registered: %s", [c.command for c in _BOT_COMMANDS])
 
 
 # ---------------------------------------------------------------------------
